@@ -1,0 +1,152 @@
+name: Repair MONO1A canonical curve02
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - apk/mono1a-native
+    paths:
+      - '.github/workflows/repair-mono1a-curve02.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: apk/mono1a-native
+          fetch-depth: 0
+
+      - name: Recover canonical 2048-byte curve from pinned SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import re
+
+          path = Path('apk/mono1a/apply-mono1a.py')
+          text = path.read_text()
+          m = re.search(r'^CURVE02_HEX = "([0-9a-fA-F]+)"$', text, re.M)
+          if not m:
+              raise SystemExit('CURVE02_HEX literal not found uniquely')
+
+          raw = bytes.fromhex(m.group(1))
+          target = '7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752'
+          print(f'input length={len(raw)} sha256={hashlib.sha256(raw).hexdigest()}')
+
+          if len(raw) == 2048 and hashlib.sha256(raw).hexdigest() == target:
+              fixed = raw
+              removed = []
+          else:
+              if len(raw) != 2050:
+                  raise SystemExit(f'unexpected curve02 length={len(raw)}; expected 2050 repair input or canonical 2048')
+
+              fixed = None
+              removed = None
+
+              # First test a contiguous two-byte insertion; this is cheap and covers
+              # the most likely generated-literal corruption mode.
+              for i in range(len(raw) - 1):
+                  cand = raw[:i] + raw[i+2:]
+                  if hashlib.sha256(cand).hexdigest() == target:
+                      fixed = cand
+                      removed = [(i, raw[i]), (i + 1, raw[i + 1])]
+                      break
+
+              # If the inserted bytes were not adjacent, exhaustively test the exact
+              # two-deletion space. The SHA pin makes the result unambiguous.
+              if fixed is None:
+                  n = len(raw)
+                  for i in range(n - 1):
+                      left = raw[:i]
+                      middle0 = raw[i+1:]
+                      for j in range(i + 1, n):
+                          # j is in original coordinates.
+                          cand = left + raw[i+1:j] + raw[j+1:]
+                          if hashlib.sha256(cand).hexdigest() == target:
+                              fixed = cand
+                              removed = [(i, raw[i]), (j, raw[j])]
+                              break
+                      if fixed is not None:
+                          break
+
+              if fixed is None:
+                  raise SystemExit('no exact two-byte deletion produces canonical curve02 SHA-256')
+
+          if len(fixed) != 2048:
+              raise SystemExit(f'canonical curve length mismatch: {len(fixed)}')
+          digest = hashlib.sha256(fixed).hexdigest()
+          if digest != target:
+              raise SystemExit(f'canonical curve SHA mismatch: {digest}')
+
+          new_literal = f'CURVE02_HEX = "{fixed.hex()}"'
+          text2 = text[:m.start()] + new_literal + text[m.end():]
+
+          # Ensure the overlay itself carries an explicit immutable verifier rather
+          # than relying only on this one-shot repair workflow.
+          verifier_anchor = 'from pathlib import Path\nimport sys\n'
+          if 'import hashlib\n' not in text2:
+              if verifier_anchor not in text2:
+                  raise SystemExit('import anchor missing')
+              text2 = text2.replace(verifier_anchor, 'from pathlib import Path\nimport hashlib\nimport sys\n', 1)
+
+          guard_anchor = new_literal + '\n\n'
+          guard = (
+              new_literal + '\n\n'
+              'CURVE02 = bytes.fromhex(CURVE02_HEX)\n'
+              'CURVE02_SHA256 = "7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752"\n'
+              'if len(CURVE02) != 2048:\n'
+              '    raise SystemExit(f"curve02 length={len(CURVE02)} expected=2048")\n'
+              'if hashlib.sha256(CURVE02).hexdigest() != CURVE02_SHA256:\n'
+              '    raise SystemExit("curve02 SHA-256 mismatch")\n\n'
+          )
+          if 'CURVE02_SHA256 = "7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752"' not in text2:
+              if guard_anchor not in text2:
+                  raise SystemExit('curve verifier insertion anchor missing')
+              text2 = text2.replace(guard_anchor, guard, 1)
+
+          path.write_text(text2)
+          print(f'canonical length={len(fixed)} sha256={digest}')
+          print('removed=' + ','.join(f'{idx}:0x{value:02x}' for idx, value in (removed or [])))
+          PY
+
+          python3 -m py_compile apk/mono1a/apply-mono1a.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, re
+          text = Path('apk/mono1a/apply-mono1a.py').read_text()
+          h = re.search(r'^CURVE02_HEX = "([0-9a-f]+)"$', text, re.M).group(1)
+          b = bytes.fromhex(h)
+          assert len(b) == 2048, len(b)
+          assert hashlib.sha256(b).hexdigest() == '7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752'
+          print('post-write verifier OK')
+          PY
+
+      - name: Commit canonical repair
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apk/mono1a/apply-mono1a.py; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'curve source already canonical'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apk/mono1a/apply-mono1a.py
+          git commit -m 'fix: restore canonical MONO1A curve02'
+          git push origin HEAD:apk/mono1a-native
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch MONO1A build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-mono1a-native.yml --ref apk/mono1a-native
