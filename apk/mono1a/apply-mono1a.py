@@ -79,7 +79,7 @@ insert = """            if (MONO1A_ENABLED) {
                 final int outW = (rotation == 90 || rotation == 270) ? height : width;
                 final int outH = (rotation == 90 || rotation == 270) ? width : height;
                 Bitmap monoBitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888);
-                long[] monoStats = new long[16];
+                long[] monoStats = new long[32];
                 boolean monoOk = M9NativeColorCore.renderMonochrome1ADirectBitmap(
                         cam16.dataAddr(), pixels, width, height, monoBitmap,
                         cameraRotation, NATIVE_COLOR_WORKERS,
@@ -120,7 +120,7 @@ insert = """            if (MONO1A_ENABLED) {
                 d.put("nativeWorkersUsed", monoStats[5]);
                 d.put("nativeMonoRenderNs", monoStats[6]);
                 d.put("nativePedestal14Echo", monoStats[7]);
-                d.put("source1Revision", "MONO1A_SOURCE1A");
+                d.put("source1Revision", "MONO1A_SOURCE1B");
                 d.put("sourceStage", "physical_Camera2_gainmap_then_MHC_live_neutral_then_M9Y_control_then_Leica14");
                 d.put("sourceCalibrationNativeTransformApplied", false);
                 d.put("sourceCalibrationRole", "not_in_MONO1A_pixel_path_capture_audit_only");
@@ -137,6 +137,30 @@ insert = """            if (MONO1A_ENABLED) {
                 d.put("curveOutputAtSourceQ90", monoStats[13]);
                 d.put("curveOutputAtSourceQ95", monoStats[14]);
                 d.put("curveOutputAtSourceQ99", monoStats[15]);
+                JSONObject source1b = new JSONObject();
+                source1b.put("schema", "mmonochrome.source1b.controls.v1");
+                source1b.put("mode", "diagnostic_same_post_MHC_buffer_no_pixel_mutation");
+                source1b.put("renderedControl", "M9Y_Q14");
+                source1b.put("neutralScaleInvariant", "R_equals_G_equals_B_produces_same_source_coordinate_all_controls");
+                source1b.put("greenOnlyFormula", "G>>>2_to_Leica14_then_same_pedestal_and_curve02");
+                source1b.put("rgbMeanFormula", "((R+G+B)/3)>>>2_to_Leica14_then_same_pedestal_and_curve02");
+                source1b.put("greenOnlyIndexQ50", monoStats[16]);
+                source1b.put("greenOnlyIndexQ90", monoStats[17]);
+                source1b.put("greenOnlyIndexQ95", monoStats[18]);
+                source1b.put("greenOnlyIndexQ99", monoStats[19]);
+                source1b.put("greenOnlyCurveQ50", monoStats[20]);
+                source1b.put("greenOnlyCurveQ90", monoStats[21]);
+                source1b.put("greenOnlyCurveQ95", monoStats[22]);
+                source1b.put("greenOnlyCurveQ99", monoStats[23]);
+                source1b.put("rgbMeanIndexQ50", monoStats[24]);
+                source1b.put("rgbMeanIndexQ90", monoStats[25]);
+                source1b.put("rgbMeanIndexQ95", monoStats[26]);
+                source1b.put("rgbMeanIndexQ99", monoStats[27]);
+                source1b.put("rgbMeanCurveQ50", monoStats[28]);
+                source1b.put("rgbMeanCurveQ90", monoStats[29]);
+                source1b.put("rgbMeanCurveQ95", monoStats[30]);
+                source1b.put("rgbMeanCurveQ99", monoStats[31]);
+                d.put("source1bControls", source1b);
                 return new RenderCore(monoBitmap, d);
             }
 
@@ -185,8 +209,8 @@ r = replace_once(
         d.remove("meterParityGainDeltaEvVsPrimary");
         d.put("pipeline", "NORM030 physical LensShadingMap -> DEMOSAICMHCNEUTRAL1A live-neutral balanced 5x5 MHC -> native Xiaomi SOURCECAL2A -> BASISHSM1A historical working-basis/H25 target role -> M9 bridge -> TC20 -> SAT3 M06/M07 -> curve02 -> exact BT601 4:2:2 -> M9Modern TG1");
 """,
-    """        d.put("schema", "mmonochrome.mono1a.source1a.v1");
-        d.put("source1Revision", "MONO1A_SOURCE1A");
+    """        d.put("schema", "mmonochrome.mono1a.source1b.v1");
+        d.put("source1Revision", "MONO1A_SOURCE1B");
         d.put("nativeSourceProduction1A", false);
         d.put("nativeSourceTransformApplied", false);
         d.put("sourceAdapterProvider", "Xiaomi_Camera2_physical_gainmap_plus_MHC_live_neutral");
@@ -276,7 +300,7 @@ Java_com_particlesdevs_photoncamera_m9_render_M9NativeColorCore_renderMonochrome
     if (!cam || !bitmap || !statsArray || width <= 0 || sourceHeight <= 0
             || pixelCount != width * sourceHeight || workers <= 0
             || pedestal14 < 0 || pedestal14 > 16383
-            || env->GetArrayLength(statsArray) < 16) {
+            || env->GetArrayLength(statsArray) < 32) {
         throwIllegalArgument(env, "Invalid MONO1A direct Bitmap arguments");
         return JNI_FALSE;
     }
@@ -302,6 +326,8 @@ Java_com_particlesdevs_photoncamera_m9_render_M9NativeColorCore_renderMonochrome
     threads.reserve(static_cast<size_t>(workerCount));
     std::vector<std::array<int64_t, 3>> local(static_cast<size_t>(workerCount));
     std::vector<std::array<uint64_t, 2048>> localIndexHist(static_cast<size_t>(workerCount));
+    std::vector<std::array<uint64_t, 2048>> localGreenHist(static_cast<size_t>(workerCount));
+    std::vector<std::array<uint64_t, 2048>> localMeanHist(static_cast<size_t>(workerCount));
     std::vector<int64_t> workerNs(static_cast<size_t>(workerCount), 0);
     auto* bitmapBase = static_cast<uint8_t*>(rawPixels);
     for (int worker = 0; worker < workerCount; ++worker) {
@@ -311,7 +337,13 @@ Java_com_particlesdevs_photoncamera_m9_render_M9NativeColorCore_renderMonochrome
             const auto ws = std::chrono::steady_clock::now();
             int64_t low = 0, high = 0, nearWhite = 0;
             auto& indexHist = localIndexHist[static_cast<size_t>(worker)];
-            for (size_t j = 0; j < indexHist.size(); ++j) indexHist[j] = 0;
+            auto& greenHist = localGreenHist[static_cast<size_t>(worker)];
+            auto& meanHist = localMeanHist[static_cast<size_t>(worker)];
+            for (size_t j = 0; j < indexHist.size(); ++j) {
+                indexHist[j] = 0;
+                greenHist[j] = 0;
+                meanHist[j] = 0;
+            }
             for (int y = y0; y < y1; ++y) {
                 const size_t row = static_cast<size_t>(y) * static_cast<size_t>(width);
                 for (int x = 0; x < width; ++x) {
@@ -324,6 +356,21 @@ Java_com_particlesdevs_photoncamera_m9_render_M9NativeColorCore_renderMonochrome
                             (4899ull * r + 9617ull * g + 1868ull * b) >> 14);
                     const int32_t sample14 = static_cast<int32_t>(
                             std::min<uint32_t>(16383u, y16 >> 2));
+                    const int32_t green14 = static_cast<int32_t>(
+                            std::min<uint32_t>(16383u, g >> 2));
+                    const uint32_t mean16 = (r + g + b) / 3u;
+                    const int32_t mean14 = static_cast<int32_t>(
+                            std::min<uint32_t>(16383u, mean16 >> 2));
+                    int32_t greenV = green14 - static_cast<int32_t>(pedestal14);
+                    if (greenV < 0) greenV = 0;
+                    int32_t greenIdx = greenV >> 3;
+                    if (greenIdx > 2047) greenIdx = 2047;
+                    int32_t meanV = mean14 - static_cast<int32_t>(pedestal14);
+                    if (meanV < 0) meanV = 0;
+                    int32_t meanIdx = meanV >> 3;
+                    if (meanIdx > 2047) meanIdx = 2047;
+                    ++greenHist[static_cast<size_t>(greenIdx)];
+                    ++meanHist[static_cast<size_t>(meanIdx)];
                     int32_t v = sample14 - static_cast<int32_t>(pedestal14);
                     if (v < 0) { v = 0; ++low; }
                     int32_t idx = v >> 3;
@@ -348,41 +395,64 @@ Java_com_particlesdevs_photoncamera_m9_render_M9NativeColorCore_renderMonochrome
     for (auto& t : threads) t.join();
     int64_t low = 0, high = 0, nearWhite = 0, workerSum = 0;
     std::array<uint64_t, 2048> indexHist{};
+    std::array<uint64_t, 2048> greenHist{};
+    std::array<uint64_t, 2048> meanHist{};
     for (int i = 0; i < workerCount; ++i) {
         low += local[static_cast<size_t>(i)][0];
         high += local[static_cast<size_t>(i)][1];
         nearWhite += local[static_cast<size_t>(i)][2];
         workerSum += workerNs[static_cast<size_t>(i)];
         const auto& srcHist = localIndexHist[static_cast<size_t>(i)];
-        for (size_t j = 0; j < indexHist.size(); ++j) indexHist[j] += srcHist[j];
+        const auto& srcGreen = localGreenHist[static_cast<size_t>(i)];
+        const auto& srcMean = localMeanHist[static_cast<size_t>(i)];
+        for (size_t j = 0; j < indexHist.size(); ++j) {
+            indexHist[j] += srcHist[j];
+            greenHist[j] += srcGreen[j];
+            meanHist[j] += srcMean[j];
+        }
     }
-    auto quantileIndex = [&](uint64_t numerator, uint64_t denominator) -> int64_t {
+    auto quantileIndex = [&](const std::array<uint64_t, 2048>& hist,
+                             uint64_t numerator, uint64_t denominator) -> int64_t {
         const uint64_t target = std::max<uint64_t>(1u,
                 (static_cast<uint64_t>(pixelCount) * numerator + denominator - 1u) / denominator);
         uint64_t cumulative = 0;
-        for (size_t j = 0; j < indexHist.size(); ++j) {
-            cumulative += indexHist[j];
+        for (size_t j = 0; j < hist.size(); ++j) {
+            cumulative += hist[j];
             if (cumulative >= target) return static_cast<int64_t>(j);
         }
         return 2047;
     };
-    const int64_t q50 = quantileIndex(50, 100);
-    const int64_t q90 = quantileIndex(90, 100);
-    const int64_t q95 = quantileIndex(95, 100);
-    const int64_t q99 = quantileIndex(99, 100);
+    const int64_t q50 = quantileIndex(indexHist, 50, 100);
+    const int64_t q90 = quantileIndex(indexHist, 90, 100);
+    const int64_t q95 = quantileIndex(indexHist, 95, 100);
+    const int64_t q99 = quantileIndex(indexHist, 99, 100);
+    const int64_t gq50 = quantileIndex(greenHist, 50, 100);
+    const int64_t gq90 = quantileIndex(greenHist, 90, 100);
+    const int64_t gq95 = quantileIndex(greenHist, 95, 100);
+    const int64_t gq99 = quantileIndex(greenHist, 99, 100);
+    const int64_t mq50 = quantileIndex(meanHist, 50, 100);
+    const int64_t mq90 = quantileIndex(meanHist, 90, 100);
+    const int64_t mq95 = quantileIndex(meanHist, 95, 100);
+    const int64_t mq99 = quantileIndex(meanHist, 99, 100);
     const int unlockResult = AndroidBitmap_unlockPixels(env, bitmap);
     const auto nativeEnded = std::chrono::steady_clock::now();
     if (unlockResult != ANDROID_BITMAP_RESULT_SUCCESS) return JNI_FALSE;
-    const jlong stats[16] = {
+    const jlong stats[32] = {
         static_cast<jlong>(pixelCount), static_cast<jlong>(low), static_cast<jlong>(high),
         static_cast<jlong>(nearWhite), static_cast<jlong>(workerSum), static_cast<jlong>(workerCount),
         static_cast<jlong>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                 nativeEnded - nativeStarted).count()), static_cast<jlong>(pedestal14),
         static_cast<jlong>(q50), static_cast<jlong>(q90), static_cast<jlong>(q95), static_cast<jlong>(q99),
         static_cast<jlong>(MM_MONO1A_CURVE02[q50]), static_cast<jlong>(MM_MONO1A_CURVE02[q90]),
-        static_cast<jlong>(MM_MONO1A_CURVE02[q95]), static_cast<jlong>(MM_MONO1A_CURVE02[q99])
+        static_cast<jlong>(MM_MONO1A_CURVE02[q95]), static_cast<jlong>(MM_MONO1A_CURVE02[q99]),
+        static_cast<jlong>(gq50), static_cast<jlong>(gq90), static_cast<jlong>(gq95), static_cast<jlong>(gq99),
+        static_cast<jlong>(MM_MONO1A_CURVE02[gq50]), static_cast<jlong>(MM_MONO1A_CURVE02[gq90]),
+        static_cast<jlong>(MM_MONO1A_CURVE02[gq95]), static_cast<jlong>(MM_MONO1A_CURVE02[gq99]),
+        static_cast<jlong>(mq50), static_cast<jlong>(mq90), static_cast<jlong>(mq95), static_cast<jlong>(mq99),
+        static_cast<jlong>(MM_MONO1A_CURVE02[mq50]), static_cast<jlong>(MM_MONO1A_CURVE02[mq90]),
+        static_cast<jlong>(MM_MONO1A_CURVE02[mq95]), static_cast<jlong>(MM_MONO1A_CURVE02[mq99])
     };
-    env->SetLongArrayRegion(statsArray, 0, 16, stats);
+    env->SetLongArrayRegion(statsArray, 0, 32, stats);
     return env->ExceptionCheck() ? JNI_FALSE : JNI_TRUE;
 }
 '''.replace("__CURVE_VALUES__", curve_values)
