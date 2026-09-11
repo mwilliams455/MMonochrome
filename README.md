@@ -22,3 +22,5 @@ The first target is Leica M Monochrom firmware 1.022. The project begins from th
 Leica M Monochrom 1.022 belongs to the same firmware family as Leica M9 1.216. It uses the same 1021-byte repeating XOR stream, decrypts to the same seven-lump PWAD container family, and the updater rules identify the target as `M9 mono`.
 
 See `docs/` and `tools/` on the research branch for the reproducible evidence.
+
+## Information
