@@ -407,7 +407,7 @@ gradle.write_text(g)
 s = strings.read_text()
 s, app_name_count = re.subn(
     r'(<string\s+name="app_name"[^>]*>).*?(</string>)',
-    r'M Monochrom Camera', s, count=1)
+    lambda m: m.group(1) + "M Monochrom Camera" + m.group(2), s, count=1)
 if app_name_count != 1:
     raise SystemExit(f"app_name anchors={app_name_count}")
 strings.write_text(s)
