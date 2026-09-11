@@ -103,7 +103,7 @@ r = replace_once(
 r = replace_once(
     r,
     '            diag.put("jpegPath", jpgPath.toString());\n',
-    '''            diag.put("jpegPath", jpgPath.toString());
+    """            diag.put("jpegPath", jpgPath.toString());
             diag.put("source1cVisualAbEnabled", true);
             diag.put("source1cControlJpegPath", jpgPath.toString());
             diag.put("source1cControlMode", "M9Y_Q14");
@@ -117,7 +117,7 @@ r = replace_once(
                 diag.put("source1cGreenJpegSaved", source1cGreenSaved);
                 if (source1cGreenError != null) diag.put("source1cGreenJpegError", source1cGreenError);
             }
-''',
+""",
     "SOURCE1C auxiliary JPEG diagnostics",
 )
 
