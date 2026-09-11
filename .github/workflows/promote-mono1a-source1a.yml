@@ -25,6 +25,15 @@ jobs:
       - name: Apply SOURCE1A promotion patch
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apk/mono1a/promote-source1a.py')
+          t = p.read_text()
+          start = t.index('# Capture-time queued snapshots are frozen before the background worker')
+          end = t.index('renderer.write_text(r)\n', start)
+          t = t[:start] + t[end:]
+          p.write_text(t)
+          PY
           python3 -m py_compile apk/mono1a/promote-source1a.py
           python3 apk/mono1a/promote-source1a.py
           python3 -m py_compile apk/mono1a/apply-mono1a.py
