@@ -1,0 +1,28 @@
+# Leica firmware / extracted binary material
+*.upm
+*.upd
+*.fw
+*.FW
+*.bin
+*.ldr
+*.map
+firmware/
+extracted/
+work/
+
+# Generated research output
+out/
+reports/generated/
+*.npy
+*.npz
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Android/build (future)
+.gradle/
+**/build/
+local.properties
+*.apk
