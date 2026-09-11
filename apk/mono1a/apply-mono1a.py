@@ -311,7 +311,7 @@ Java_com_particlesdevs_photoncamera_m9_render_M9NativeColorCore_renderMonochrome
             const auto ws = std::chrono::steady_clock::now();
             int64_t low = 0, high = 0, nearWhite = 0;
             auto& indexHist = localIndexHist[static_cast<size_t>(worker)];
-            indexHist.fill(0);
+            for (size_t j = 0; j < indexHist.size(); ++j) indexHist[j] = 0;
             for (int y = y0; y < y1; ++y) {
                 const size_t row = static_cast<size_t>(y) * static_cast<size_t>(width);
                 for (int x = 0; x < width; ++x) {
