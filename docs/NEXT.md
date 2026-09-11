@@ -1,26 +1,61 @@
-# Next research target
+# Next project target
 
-Continue on `research/mm-firmware-r0` from `docs/LUT_SELECTOR_TRACE_v0_3.md`.
+Continue from `docs/LUT_SELECTOR_TRACE_v0_3.md`, `docs/NATIVE_CONTRAST_MODE_v0_3.md`, and `docs/MONO_SIGNAL_DOMAIN_v0_4.md`.
 
-The Monochrom contrast/tone selector is now closed:
+## Firmware truths now closed for the first native-resolution renderer
 
-- `SetLutL3` generic 4-D flattening is decoded.
-- `SetStructParameter` proves `i0=nContrast`, `i1=nColorSpace`, `i2=nSaturation`, `i3=(nIso==4)`.
-- archive metadata is exactly `[60, 2048, 2, 5, 3, 2]`.
-- the 60-curve bank is `5 contrast x 2 color spaces x 3 saturation states x 2 ISO paths`.
-- the three saturation slices are byte-identical for this tone bank.
-- the canonical 20-curve bank is the exact 60-bank collapse.
-- BF547 proves `Standard=2`, `sRGB=0`, and `PULL 160=4`.
-- normal ISO / sRGB / Standard therefore selects canonical curve `02`.
+- normal ISO / sRGB / Standard -> canonical curve `02`;
+- JPEG resolution `100%` -> `Process_Contrast` mode `0`;
+- mode 0 is a one-sample / one-output path;
+- Monochrom working signal range is `0..16383` in 16-bit storage;
+- `context+128` is a shared signal pedestal / black-reference coordinate used by Shading and Contrast;
+- native Contrast arithmetic is exactly:
 
-Next, trace the active Monochrom contrast consumer:
+```text
+v = max(uint16(sample14) - pedestal, 0)
+idx = v >>> 3
+out8 = curve02[idx]
+```
 
-1. decode `Process_Contrast` at `0xFFA00B30` and its call from `Run`;
-2. prove which `ExecuteContrast_11LUT8_7`, `_2`, or `_3` kernel is selected for the normal still/JPEG path;
-3. recover exact input width/domain and LUT-index arithmetic;
-4. recover interpolation, rounding/truncation and clamp behavior;
-5. recover output width/domain;
-6. place the stage relative to `Process_Y`, noise, shading and sharpness;
-7. then return to `LoadISODataL1` and the 16 x 2 x 2050-word ISO-aligned bank.
+## MONO1A APK gate
 
-Do not import the later M9 colour-path conclusion that contrast is fused into ColorMatrix: M Monochrom `Run` directly calls `Process_Contrast`.
+The research gate is now **OPEN** for:
+
+```text
+apk/mono1a-native
+```
+
+The implementation objective is a controlled Xiaomi 15 Ultra main-camera 12 MP photo path:
+
+```text
+Xiaomi RAW
+  -> source black/white normalization
+  -> physical LensShadingMap correction
+  -> high-quality provisional monochrome reconstruction
+  -> explicit Xiaomi -> Leica 14-bit source adapter
+  -> exact M Monochrom native mode-0 curve02 stage
+  -> high-quality grayscale JPEG
+  + untouched/normal project DNG save path
+```
+
+Do not block MONO1A on 75/50/25% resampling kernels or exact Leica noise/sharpness parity. If those stages are not closed, keep them disabled or inherited only where they do not change photographic pixels unexpectedly; do not invent tuning.
+
+## Immediate implementation work
+
+1. create `apk/mono1a-native`;
+2. reuse the proven M9 PhotonCamera capture/queue/DNG/JPEG/native-library scaffolding without modifying the M9 production branch;
+3. isolate a `MonoSourceAdapter` from the Leica core;
+4. start with a high-quality demosaic-based linear luminance source adapter, clearly labelled provisional;
+5. map source signal to the 14-bit Leica coordinate with an explicit/logged pedestal convention;
+6. embed the extracted curve02 values as generated source data or reproducible build output, not Leica firmware blobs;
+7. add diagnostics for source black/white levels, pedestal, 14-bit min/median/q99.8, LUT index min/median/q99.8, output clipping, ISO and exposure;
+8. build an APK and validate ordinary daylight, indoor light, backlight, foliage/sky, people, and high ISO before enabling any extra detail/noise processing.
+
+## Research continuing in parallel
+
+- close the exact upstream producer semantics for the native Leica pedestal;
+- decode the 16 x 2 x 2050-byte ISO-aligned bank and `LoadISODataL1` consumer;
+- recover Monochrom noise/sharpening stages for later photographic parity;
+- investigate a photosite-domain Xiaomi pseudo-monochrome reconstruction to reduce Bayer/demosaic character versus the first provisional adapter.
+
+No HDR, no scene-specific exposure hacks, and no visual curve tuning.
