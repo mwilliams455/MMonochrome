@@ -23,16 +23,33 @@ jobs:
           fetch-depth: 0
 
       - name: Apply SOURCE1C visual A/B
+        id: apply
+        continue-on-error: true
         run: |
-          set -euxo pipefail
-          python3 -m py_compile apk/mono1a/promote-source1c.py
-          python3 apk/mono1a/promote-source1c.py apk/mono1a/apply-mono1a.py
-          python3 -m py_compile apk/mono1a/apply-mono1a.py
-          grep -n 'MONO1A_SOURCE1C' apk/mono1a/apply-mono1a.py
-          grep -n 'renderMonochrome1AVariantDirectBitmap' apk/mono1a/apply-mono1a.py
-          grep -n '_MONO_EQUALRGB.jpg' apk/mono1a/apply-mono1a.py
-          grep -n '_MONO_GREEN.jpg' apk/mono1a/apply-mono1a.py
-          grep -n 'same_post_MHC_cam16_same_curve02_no_auto_selection' apk/mono1a/apply-mono1a.py
+          set -o pipefail
+          {
+            set -eux
+            python3 -m py_compile apk/mono1a/promote-source1c.py
+            python3 apk/mono1a/promote-source1c.py apk/mono1a/apply-mono1a.py
+            python3 -m py_compile apk/mono1a/apply-mono1a.py
+            grep -n 'MONO1A_SOURCE1C' apk/mono1a/apply-mono1a.py
+            grep -n 'renderMonochrome1AVariantDirectBitmap' apk/mono1a/apply-mono1a.py
+            grep -n '_MONO_EQUALRGB.jpg' apk/mono1a/apply-mono1a.py
+            grep -n '_MONO_GREEN.jpg' apk/mono1a/apply-mono1a.py
+            grep -n 'same_post_MHC_cam16_same_curve02_no_auto_selection' apk/mono1a/apply-mono1a.py
+          } 2>&1 | tee SOURCE1C_PROMOTE.log
+
+      - name: Upload promotion log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-SOURCE1C-PROMOTE-LOG
+          path: SOURCE1C_PROMOTE.log
+          if-no-files-found: error
+
+      - name: Stop on promotion failure
+        if: steps.apply.outcome != 'success'
+        run: exit 1
 
       - name: Commit SOURCE1C overlay
         run: |
