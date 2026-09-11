@@ -36,16 +36,25 @@ jobs:
           PY
           python3 -m py_compile apk/mono1a/promote-source1a.py
           python3 apk/mono1a/promote-source1a.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apk/mono1a/apply-mono1a.py')
+          t = p.read_text()
+          t = t.replace("versionName '0.02-mmonochrome-source1a'", "versionName '0.01-mmonochrome-mono1a-native'", 1)
+          t = t.replace('outputFileName = "MMonochrome-SOURCE1A-${versionBuild}-${variant.name}.apk"', 'outputFileName = "MMonochrome-MONO1A-${versionBuild}-${variant.name}.apk"', 1)
+          p.write_text(t)
+          PY
+          git checkout -- .github/workflows/build-mono1a-native.yml
           python3 -m py_compile apk/mono1a/apply-mono1a.py
           grep -n 'MONO1A_SOURCE1A' apk/mono1a/apply-mono1a.py
-          grep -n "versionName '0.02-mmonochrome-source1a'" apk/mono1a/apply-mono1a.py
+          grep -n "versionName '0.01-mmonochrome-mono1a-native'" apk/mono1a/apply-mono1a.py
 
       - name: Commit SOURCE1A
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add apk/mono1a/apply-mono1a.py .github/workflows/build-mono1a-native.yml
+          git add apk/mono1a/apply-mono1a.py
           git commit -m 'mono: add SOURCE1A truthful pipeline diagnostics'
           git push origin HEAD:apk/mono1a-native
 
