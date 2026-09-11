@@ -1,4 +1,4 @@
-name: Fix MONO1A SOURCE1A histogram init
+name: Fix MONO1A app_name XML replacement
 
 on:
   workflow_dispatch:
@@ -22,22 +22,22 @@ jobs:
           ref: apk/mono1a-native
           fetch-depth: 0
 
-      - name: Replace std::array fill with explicit zero loop
+      - name: Replace unsafe re.sub backreference template
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           p = Path('apk/mono1a/apply-mono1a.py')
-          t = p.read_text()
-          old = '            indexHist.fill(0);\n'
-          new = '            for (size_t j = 0; j < indexHist.size(); ++j) indexHist[j] = 0;\n'
-          n = t.count(old)
-          if n != 1:
-              raise SystemExit(f'indexHist.fill anchor count={n}, expected 1')
-          p.write_text(t.replace(old, new, 1))
+          lines = p.read_text().splitlines(True)
+          hits = [i for i, line in enumerate(lines)
+                  if 'M Monochrom Camera' in line and 'count=1)' in line]
+          if len(hits) != 1:
+              raise SystemExit(f'app_name replacement anchor count={len(hits)}, expected 1')
+          lines[hits[0]] = '    lambda m: m.group(1) + "M Monochrom Camera" + m.group(2), s, count=1)\n'
+          p.write_text(''.join(lines))
           PY
           python3 -m py_compile apk/mono1a/apply-mono1a.py
-          grep -n 'indexHist\[j\] = 0' apk/mono1a/apply-mono1a.py
+          grep -n 'M Monochrom Camera' apk/mono1a/apply-mono1a.py
 
       - name: Commit fix
         run: |
@@ -45,7 +45,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add apk/mono1a/apply-mono1a.py
-          git commit -m 'mono: fix SOURCE1A histogram initialization'
+          git commit -m 'mono: fix MONO1A app_name XML replacement'
           git push origin HEAD:apk/mono1a-native
 
       - name: Dispatch SOURCE1A build
