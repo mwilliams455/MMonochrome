@@ -1,14 +1,13 @@
-name: Build MMonochrome MONO1A Native
+name: Build MMonochrome SOURCE1D XYZY1A
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - apk/mono1a-native
+      - apk/mono1a-source1d
     paths:
       - 'apk/mono1a/**'
       - '.github/workflows/build-mono1a-native.yml'
-      - 'docs/**'
 
 jobs:
   build:
@@ -34,9 +33,11 @@ jobs:
           set -euo pipefail
           test "$(git -C m9base rev-parse HEAD)" = "fb1db92ef78df70442b9fee879795e584f2170cf"
           python3 -m py_compile apk/mono1a/apply-mono1a.py
+          python3 -m py_compile apk/mono1a/apply-source1d.py
           echo "M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf" | tee MONO1A_UPSTREAM.txt
           echo "M9_SUCCESSFUL_REFERENCE_RUN=34610280688" | tee -a MONO1A_UPSTREAM.txt
           echo "MM_CURVE02_SHA256=7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752" | tee -a MONO1A_UPSTREAM.txt
+          echo "SOURCE_REVISION=MONO1A_SOURCE1D_XYZY1A" | tee -a MONO1A_UPSTREAM.txt
 
       - name: Verify frozen M9 patch syntax
         working-directory: m9base
@@ -95,14 +96,15 @@ jobs:
           python3 patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
           python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
 
-      - name: Apply MONO1A renderer overlay
+      - name: Apply MONO1A and SOURCE1D overlays
         shell: bash
         run: |
           set -euxo pipefail
           ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
           python3 apk/mono1a/apply-mono1a.py "$ROOT"
+          python3 apk/mono1a/apply-source1d.py "$ROOT"
 
-      - name: Verify MONO1A photographic scope
+      - name: Verify MONO1A photographic scope and SOURCE1D isolation
         shell: bash
         run: |
           set -euo pipefail
@@ -122,23 +124,26 @@ jobs:
           grep -n 'hdrApplied.*false' "$R"
           grep -n 'MM_MONO1A_CURVE02\[2048\]' "$C"
           grep -n '4899ull \* r + 9617ull \* g + 1868ull \* b' "$C"
+          grep -n 'MONO1A_SOURCE1D_XYZY1A' "$R"
+          grep -n 'NATIVE_DNG_SENSOR_TO_XYZ_D50_Y_ROW' "$R"
+          grep -n 'counterfactual_scene_luminance_bridge_not_Leica_spectral_truth' "$R"
+          grep -n '_MONO_XYZY.jpg' "$R"
+          grep -n 'renderMonochrome1AWeightedDirectBitmap' "$R" "$N" "$C"
           grep -n 'applicationId.*com.m9project.mmonochrome.photon' "$G"
-          grep -n "versionName '0.01-mmonochrome-mono1a-native'" "$G"
-          grep -n 'MMonochrome-MONO1A-' "$G"
           ! grep -q 'applicationId.*com.m9project.m9cam.photon' "$G"
 
-      - name: Snapshot MONO1A assembled source
+      - name: Snapshot SOURCE1D assembled source
         shell: bash
         run: |
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
-          mkdir -p mono1a-assembled-source
-          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" mono1a-assembled-source/
-          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java" mono1a-assembled-source/
-          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" mono1a-assembled-source/
-          cp "$ROOT/app/build.gradle" mono1a-assembled-source/app-build.gradle
-          cp MONO1A_UPSTREAM.txt mono1a-assembled-source/
-          sha256sum mono1a-assembled-source/* | tee mono1a-assembled-source/SHA256SUMS.txt
+          mkdir -p source1d-assembled-source
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" source1d-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java" source1d-assembled-source/
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" source1d-assembled-source/
+          cp "$ROOT/app/build.gradle" source1d-assembled-source/app-build.gradle
+          cp MONO1A_UPSTREAM.txt source1d-assembled-source/
+          sha256sum source1d-assembled-source/* | tee source1d-assembled-source/SHA256SUMS.txt
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -154,43 +159,43 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
 
-      - name: Build MONO1A debug APK
+      - name: Build SOURCE1D debug APK
         shell: bash
         run: |
           set -o pipefail
           cd m9base/PhotonCamera
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONO1A_GRADLE.log"
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/SOURCE1D_GRADLE.log"
 
       - name: Record APK SHA256
         if: success()
         run: |
           set -euo pipefail
-          sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee MONO1A_APK_SHA256.txt
+          sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee SOURCE1D_APK_SHA256.txt
 
-      - name: Upload MONO1A build logs
+      - name: Upload SOURCE1D build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-MONO1A-BUILDLOG
-          path: MONO1A_GRADLE.log
+          name: MMonochrome-SOURCE1D-BUILDLOG
+          path: SOURCE1D_GRADLE.log
           if-no-files-found: ignore
 
-      - name: Upload MONO1A assembled source
+      - name: Upload SOURCE1D assembled source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-MONO1A-ASSEMBLED-SOURCE
-          path: mono1a-assembled-source/
+          name: MMonochrome-SOURCE1D-ASSEMBLED-SOURCE
+          path: source1d-assembled-source/
           if-no-files-found: ignore
 
-      - name: Upload MONO1A APK
+      - name: Upload SOURCE1D APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-MONO1A-NATIVE
+          name: MMonochrome-SOURCE1D-XYZY1A
           path: |
             m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
-            MONO1A_APK_SHA256.txt
+            SOURCE1D_APK_SHA256.txt
             MONO1A_UPSTREAM.txt
           if-no-files-found: error
