@@ -28,9 +28,21 @@ DEFAULT_TARGETS = [
     "Process_Contrast",
     "Process_Noise",
     "Process_Sharpness",
+    "Process_Blinker",
     "CalculateNoiseParameter",
     "LoadISODataL1",
     "LoadLutArchiveL3",
+    "InitL1MemoryProcessing",
+    "DMACopyWindow",
+    "L3L1_Get",
+    "L3L1_Put16Bit",
+    "L3L1_Put8Bit",
+    "IP_Start",
+    "IP_FinishLines",
+    "IP_Finished",
+    "LoadBlemishL1",
+    "CorrectionBlemishes",
+    "CorrectionDualOutput",
     "Run",
 ]
 
@@ -160,7 +172,7 @@ def main() -> None:
         args.out_dir.mkdir(parents=True, exist_ok=True)
 
     result = {
-        "schema": "mmonochrom.source1e.function_anchors.v1",
+        "schema": "mmonochrom.source1e.function_anchors.v2",
         "scope": "exact_function_slices_before_instruction_decode",
         "mono_ldr_sha256": sha256(args.mono_ldr.read_bytes()),
         "mono_map_sha256": sha256(args.mono_map.read_bytes()),
@@ -202,8 +214,9 @@ def main() -> None:
     result["problems"] = problems
     result["strict_checks_passed"] = not problems
     result["next_step"] = (
-        "Use the recovered address/size/SHA-256 anchors to build a narrow decoder for "
-        "Process_Y and L3L1_Put8BitY; do not infer pipeline order from symbol order."
+        "Use the recovered Run transfer/processing helper anchors to trace the 16-bit scalar "
+        "buffer backwards from Process_Shading/Process_Contrast; do not infer sensor semantics "
+        "from symbol names alone."
     )
     print(json.dumps(result, indent=2))
 
