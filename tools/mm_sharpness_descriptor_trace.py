@@ -10,7 +10,6 @@ Output is derived text/JSON only.
 from __future__ import annotations
 
 import argparse
-import bisect
 import json
 import pathlib
 import re
@@ -57,7 +56,9 @@ def main() -> None:
         maps[core] = syms
         blocks = base.parse_ldr(cmap[core].data)
         block_info[core] = blocks
-        lines = base.disassemble_blocks(blocks, a.objdump, work / core)
+        core_work = work / core
+        core_work.mkdir(exist_ok=True)
+        lines = base.disassemble_blocks(blocks, a.objdump, core_work)
         for row in lines:
             all_source_lines.append((core,) + row)
 
@@ -75,7 +76,7 @@ def main() -> None:
         )[:12]
         return {"covering": covering, "nearest": nearest}
 
-    def containing_blocks(blocks: list[dict], addr: int) -> list[dict]:
+    def containing_blocks(blocks: list[dict], addr: int) -> dict:
         out = []
         for i, b in enumerate(blocks):
             lo = int(b["addr"]); hi = lo + len(b["payload"])
@@ -96,8 +97,6 @@ def main() -> None:
         )[:8]
         return {"containing": out, "nearest": nearest}
 
-    # Pair Pn.L/Pn.H immediate materializations into full 32-bit addresses.
-    # Keep a small rolling window per core and pointer register.
     materializations = []
     for core in maps:
         lines = [(addr, text, src, ln) for c, addr, text, src, ln in all_source_lines if c == core]
