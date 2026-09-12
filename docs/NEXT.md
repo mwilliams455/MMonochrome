@@ -75,9 +75,27 @@ Required pass conditions include:
 - disputed M9 colour-path records absent from Monochrom `bf0` and present in M9 `bf0`;
 - optional `bf1.map` pair byte-identical when supplied.
 
-### Gate B — recover scalar buffer lineage
+### Gate B — anchor exact function bytes
 
-If Gate A reproduces the canonical result, the active named targets are:
+Once Gate A passes, do not begin disassembly from copied snippets or unpinned addresses. Extract exact routine slices and SHA-256 anchors first:
+
+```bash
+python tools/extract_source1e_targets.py \
+  --mono-ldr /path/to/mm/BF561/bf0 \
+  --mono-map /path/to/mm/BF561/bf0.map \
+  --m9-ldr /path/to/m9/BF561/bf0 \
+  --m9-map /path/to/m9/BF561/bf0.map \
+  --out-dir /tmp/source1e-functions \
+  --strict
+```
+
+The extractor pins address, size and SHA-256 for `Process_Y`, `L3L1_Put8BitY`, Shading, Contrast, Noise, Sharpness, `CalculateNoiseParameter`, `LoadISODataL1`, `LoadLutArchiveL3`, and `Run`. With M9 assets present it also records whether each same-named function is byte-identical across generations.
+
+A byte-identical `Process_Y` would be useful provenance but would **not** by itself prove identical upstream sensor semantics. A different `Process_Y` would immediately identify a Monochrom-specific executable target.
+
+### Gate C — recover scalar buffer lineage
+
+With exact routine hashes pinned, the active named path is:
 
 ```text
 native producer
@@ -87,12 +105,11 @@ native producer
 
 Then:
 
-1. extract exact `Process_Y` and `L3L1_Put8BitY` bytes from Monochrom BF561;
-2. extend the existing strict small Blackfin decoder only for opcodes actually present;
-3. recover entry arguments, pointers, sample widths, strides, arithmetic, shifts/clamps, and calls;
-4. trace buffers backward to their producer and forward through Shading/Contrast/output;
-5. recover runtime processing-list order rather than treating dispatcher case order as photographic order;
-6. inspect BF547/FPGA only where buffer/control-flow evidence points there.
+1. extend the existing strict small Blackfin decoder only for opcodes actually present in `Process_Y` and `L3L1_Put8BitY`;
+2. recover entry arguments, pointers, sample widths, strides, arithmetic, shifts/clamps, and calls;
+3. trace buffers backward to their producer and forward through Shading/Contrast/output;
+4. recover runtime processing-list order rather than treating dispatcher case order as photographic order;
+5. inspect BF547/FPGA only where buffer/control-flow evidence points there.
 
 Do not claim native CCD/FPGA semantics until that producer/consumer chain is closed.
 
@@ -132,4 +149,12 @@ Only after the scalar source/input path is stable:
 - exact pedestal producer semantics;
 - performance optimization of the Android renderer.
 
-The immediate fidelity bottleneck is the native scalar producer, but the immediate forensic prerequisite is now the **bf0 provenance rerun** so the old token-vs-fixed-record contradiction is closed before further architectural claims are made.
+The immediate fidelity bottleneck is the native scalar producer. The immediate forensic sequence is now fixed:
+
+```text
+bf0 provenance rerun
+  -> exact function address/size/SHA anchors
+  -> narrow instruction decode
+  -> buffer lineage
+  -> photosite-domain Xiaomi counterfactual only if justified
+```
