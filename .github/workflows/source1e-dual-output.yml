@@ -1,0 +1,154 @@
+name: SOURCE1E Dual Output Trace
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/source1e-processy
+    paths:
+      - '.github/workflows/source1e-dual-output.yml'
+      - 'tools/recover_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+      - 'tools/extract_source1e_targets.py'
+      - 'tools/extract_bfin_symbol_occurrences.py'
+      - 'tools/resolve_bfin_calls.py'
+
+permissions:
+  contents: read
+
+jobs:
+  dual-output:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install or build GNU Blackfin objdump
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-multiarch curl xz-utils build-essential jq
+          OBJDUMP="$(command -v objdump)"
+          if ! "$OBJDUMP" -i 2>/dev/null | grep -Eiq 'bfin|blackfin'; then
+            cd "$RUNNER_TEMP"
+            curl --fail --location --retry 4 --retry-all-errors -o binutils-2.44.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
+            tar -xf binutils-2.44.tar.xz
+            mkdir -p binutils-build && cd binutils-build
+            ../binutils-2.44/configure --target=bfin-elf --disable-nls --disable-werror --disable-gdb --disable-gas --disable-ld --disable-sim
+            make -j2 all-binutils
+            OBJDUMP="$PWD/binutils/objdump"
+          fi
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
+
+      - name: Download and decrypt canonical Monochrom firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-dual"
+          mkdir -p "$W/evidence" "$W/extracted" "$W/functions"
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$W/m9.upd" | sha256sum -c --strict
+          echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$W/mm.upm" | sha256sum -c --strict
+          python tools/recover_m9_mm_shared_key.py "$W/m9.upd" "$W/mm.upm" \
+            --m9-out "$W/m9.dec" --mm-out "$W/mm.dec" --meta-out "$W/evidence/recovery_meta.json"
+
+      - name: Extract Monochrom bf0 assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-dual"
+          PYTHONPATH=tools python - <<'PY'
+          import os
+          from pathlib import Path
+          from pwad import get_lump
+          root=Path(os.environ['RUNNER_TEMP'])/'source1e-dual'
+          fw=(root/'mm.dec').read_bytes()
+          for name in ('bf0','bf0.map'):
+              (root/'extracted'/f'mm_{name}').write_bytes(get_lump(fw,['BF561',name]).data)
+          PY
+
+      - name: Extract Run and every dual-output helper occurrence
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-dual"
+          python tools/extract_source1e_targets.py \
+            --mono-ldr "$W/extracted/mm_bf0" --mono-map "$W/extracted/mm_bf0.map" \
+            --target Run --out-dir "$W/functions" --strict > "$W/evidence/run_anchor.json"
+          python tools/extract_bfin_symbol_occurrences.py \
+            --ldr "$W/extracted/mm_bf0" --map "$W/extracted/mm_bf0.map" \
+            --symbol CorrectionDualOutput \
+            --symbol Process_DualOutputCorrec \
+            --symbol DMACopyWindow \
+            --symbol DMACopyBackWindow \
+            --out-dir "$W/functions" --strict > "$W/evidence/dual_occurrences.json"
+          cat "$W/evidence/dual_occurrences.json"
+
+      - name: Disassemble Run and all occurrences
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-dual"
+          E="$W/evidence"
+          base=$(jq -r '.targets.Run.monochrom.address' "$E/run_anchor.json")
+          "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$W/functions/mm_Run.bin" > "$E/mm_Run.gnu.dis.txt"
+          python - <<'PY' > "$W/disasm_jobs.tsv"
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'source1e-dual'
+          j=json.loads((root/'evidence'/'dual_occurrences.json').read_text())
+          for symbol,items in j['symbols'].items():
+              for item in items:
+                  print(item['address'], item['filename'])
+          PY
+          while IFS=$'\t' read -r base file; do
+            out="${file%.bin}.gnu.dis.txt"
+            "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$W/functions/$file" > "$E/$out"
+          done < "$W/disasm_jobs.tsv"
+
+      - name: Resolve direct calls and focused memory-transfer snippets
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-dual"
+          E="$W/evidence"
+          ARGS=(--disassembly "$E/mm_Run.gnu.dis.txt")
+          for f in "$E"/*.gnu.dis.txt; do
+            [ "$f" = "$E/mm_Run.gnu.dis.txt" ] || ARGS+=(--disassembly "$f")
+          done
+          python tools/resolve_bfin_calls.py --map "$W/extracted/mm_bf0.map" "${ARGS[@]}" > "$E/dual_direct_calls.json"
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'source1e-dual'/'evidence'
+          out={'schema':'mmonochrom.source1e.dual_output_snippets.v1','files':{}}
+          needles=('CALL','0x2d72','0x2dbe','0x11910','0x00d30','[FP','[SP','R0 =','R1 =','R2 =','R3 =','P0 =','P1 =','P2 =','P3 =')
+          for p in sorted(root.glob('*.gnu.dis.txt')):
+              rows=[]
+              lines=p.read_text(errors='replace').splitlines()
+              for i,line in enumerate(lines):
+                  if any(n.lower() in line.lower() for n in needles):
+                      rows.append({'line_number':i+1,'text':line.strip()})
+              out['files'][p.name]=rows
+          (root/'dual_output_snippets.json').write_text(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+
+      - name: Upload text evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SOURCE1E-DUAL-OUTPUT
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/source1e-dual/evidence/*
+
+      - name: Remove firmware and binary material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/source1e-dual"
