@@ -15,7 +15,14 @@ import struct
 from pathlib import Path
 from typing import Dict, List
 
-CALL_RE = re.compile(r"^\s*([0-9a-fA-F]+):.*\bCALL\s+0x([0-9a-fA-F]+)\b")
+# GNU's Blackfin disassembler currently renders direct absolute calls as e.g.
+# ``CALL 0x0xffa13990`` (a duplicated 0x prefix).  Accept both that spelling
+# and the conventional ``CALL 0xffa13990`` rather than silently reporting zero
+# calls.
+CALL_RE = re.compile(
+    r"^\s*([0-9a-fA-F]+):.*\bCALL\s+(?:0x)+(?:0x)?([0-9a-fA-F]+)\b",
+    re.IGNORECASE,
+)
 
 
 def map_records(path: Path) -> List[dict]:
@@ -61,7 +68,7 @@ def main() -> None:
     rows = map_records(args.map)
     exact = exact_address_index(rows)
     output = {
-        "schema": "mmonochrom.bfin_direct_calls.v1",
+        "schema": "mmonochrom.bfin_direct_calls.v2",
         "scope": "explicit_direct_CALL_only_no_indirect_or_runtime_order_claim",
         "map": str(args.map),
         "files": {},
