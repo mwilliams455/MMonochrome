@@ -1,0 +1,206 @@
+name: M Monochrom Sharpness Consumer Trace
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/mm-sharpness-lutbank1a
+    paths:
+      - '.github/workflows/mm-sharpness-consumer-trace.yml'
+      - 'tools/recover_leica_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+      - 'tools/trace_lut_consumers.py'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install or build Blackfin objdump
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-multiarch curl xz-utils build-essential
+          OBJDUMP="$(command -v objdump)"
+          if ! "$OBJDUMP" -i 2>/dev/null | grep -Eiq 'bfin|blackfin'; then
+            cd "$RUNNER_TEMP"
+            curl --fail --location --retry 4 --retry-all-errors -o binutils-2.44.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
+            tar -xf binutils-2.44.tar.xz
+            mkdir -p binutils-build && cd binutils-build
+            ../binutils-2.44/configure --target=bfin-elf --disable-nls --disable-werror --disable-gdb --disable-gas --disable-ld --disable-sim
+            make -j2 all-binutils
+            OBJDUMP="$PWD/binutils/objdump"
+          fi
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
+
+      - name: Download and decrypt canonical firmwares
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mmsharp"
+          curl --fail --location --retry 4 --retry-all-errors \
+            -o "$RUNNER_TEMP/mmsharp/m9.upd" \
+            'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors \
+            -o "$RUNNER_TEMP/mmsharp/mm.upm" \
+            'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          python3 tools/recover_leica_m9_mm_shared_key.py \
+            "$RUNNER_TEMP/mmsharp/m9.upd" "$RUNNER_TEMP/mmsharp/mm.upm" \
+            --mm-out "$RUNNER_TEMP/mmsharp/mm.dec" \
+            --meta-out "$RUNNER_TEMP/mmsharp/recovery_meta.json"
+
+      - name: Extract Monochrom BF561 bf0 and map
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, sys, hashlib, struct
+          sys.path.insert(0, str(pathlib.Path.cwd()/'tools'))
+          import pwad
+          rt=pathlib.Path(os.environ['RUNNER_TEMP'])/'mmsharp'
+          fw=(rt/'mm.dec').read_bytes()
+          bf=next((l for l in pwad.parse_pwad(fw) if l.name.upper()=='BF561'),None)
+          if bf is None: raise SystemExit('outer BF561 missing')
+          children=pwad.parse_pwad(bf.data)
+          manifest=[]
+          for l in children:
+              manifest.append({'name':l.name,'size':l.size,'sha256':l.sha256,'is_pwad':l.is_pwad})
+              safe=l.name.replace('/','_')
+              if l.name.lower() in ('bf0.bin','bf0.map','bf1.bin','bf1.map'):
+                  (rt/safe).write_bytes(l.data)
+          json.dump({'bf561_sha256':bf.sha256,'children':manifest},open(rt/'bf561_manifest.json','w'),indent=2)
+          print(json.dumps(manifest,indent=2))
+          for req in ('bf0.bin','bf0.map'):
+              if not (rt/req).exists(): raise SystemExit('missing '+req)
+          PY
+          python3 tools/trace_lut_consumers.py \
+            --ldr "$RUNNER_TEMP/mmsharp/bf0.bin" \
+            --map "$RUNNER_TEMP/mmsharp/bf0.map" --json \
+            > "$RUNNER_TEMP/mmsharp/known_lut_consumers.json"
+          cat "$RUNNER_TEMP/mmsharp/known_lut_consumers.json"
+
+      - name: Split BF561 LDR blocks and symbol manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,pathlib,struct
+          rt=pathlib.Path(os.environ['RUNNER_TEMP'])/'mmsharp'
+          mp=(rt/'bf0.map').read_bytes(); syms=[]
+          for off in range(0,len(mp)-31,32):
+              rec=mp[off:off+32]
+              name=rec[:24].split(b'\0',1)[0].decode('ascii','ignore').rstrip("'")
+              if not name: continue
+              addr,size=struct.unpack_from('<II',rec,24)
+              syms.append({'name':name,'addr':addr,'size':size,'mapoff':off})
+          b=(rt/'bf0.bin').read_bytes(); off=4; blocks=[]; bd=rt/'blocks';bd.mkdir(exist_ok=True)
+          while off+10<=len(b):
+              addr,count,flags=struct.unpack_from('<IIH',b,off); header=off; off+=10
+              if flags&1:data=bytes(count)
+              else:data=b[off:off+count];off+=count
+              p=bd/f'block_{len(blocks):03d}_{addr:08x}.bin';p.write_bytes(data)
+              blocks.append({'file':p.name,'addr':addr,'size':len(data),'flags':flags,'header_off':header})
+              if flags&0x8000:break
+          wanted=('Sharp','Noise','ISO','Lut','Contrast','Shading','SetStruct','SetProcess','Run','Set')
+          focus=[s for s in syms if any(k.lower() in s['name'].lower() for k in wanted)]
+          json.dump({'symbols':syms,'focus_symbols':focus,'blocks':blocks},open(rt/'bf0_symbols_blocks.json','w'),indent=2)
+          print(json.dumps({'symbol_count':len(syms),'focus':focus,'blocks':len(blocks)},indent=2))
+          PY
+          for f in "$RUNNER_TEMP/mmsharp/blocks"/*.bin; do
+            bn=$(basename "$f" .bin)
+            base=$(printf '%s' "$bn" | sed -nE 's/^block_[0-9]+_([0-9a-fA-F]{8})$/\1/p')
+            "$OBJDUMP" -D -b binary -m bfin --adjust-vma="0x$base" "$f" > "$RUNNER_TEMP/mmsharp/blocks/${bn}.dis.txt"
+          done
+
+      - name: Recover focused function disassembly and call graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,pathlib,re,bisect
+          rt=pathlib.Path(os.environ['RUNNER_TEMP'])/'mmsharp'; bd=rt/'blocks'
+          m=json.load(open(rt/'bf0_symbols_blocks.json')); syms=m['symbols']; blocks=m['blocks']
+          exact={}
+          for s in syms: exact.setdefault(int(s['addr']),[]).append(s['name'])
+          starts=sorted(exact)
+          def resolve(a):
+              if a in exact:return {'exact':exact[a]}
+              j=bisect.bisect_right(starts,a)-1
+              if j<0:return None
+              st=starts[j];return {'nearest_addr':hex(st),'nearest':exact[st],'offset':a-st}
+          lines=[]
+          for p in sorted(bd.glob('*.dis.txt')):
+              ls=p.read_text(errors='replace').splitlines()
+              for idx,l in enumerate(ls):
+                  mm=re.match(r'^\s*([0-9a-f]+):',l)
+                  if mm: lines.append((int(mm.group(1),16),l,p.name,idx+1))
+          lines.sort(key=lambda x:x[0])
+          addrs=[x[0] for x in lines]
+          def func_text(s):
+              lo=int(s['addr']);hi=lo+int(s['size'])
+              i=bisect.bisect_left(addrs,lo);j=bisect.bisect_left(addrs,hi)
+              return '\n'.join(x[1] for x in lines[i:j])
+          targets=['Process_Sharpness','Process_Noise','Process_Shading','Process_Contrast','LoadISODataL1','LoadLutArchiveL3','CalculateNoiseParameter','SetStructParameter','SetProcess','Set','Run']
+          funcs={}
+          for name in targets:
+              ms=[s for s in syms if s['name']==name]
+              funcs[name]=[{'addr':hex(int(s['addr'])),'size':int(s['size']),'disassembly':func_text(s)} for s in ms]
+          # Calls/jumps into high-value functions, using objdump decoded absolute targets.
+          target_ranges=[]
+          for name in targets:
+              for s in syms:
+                  if s['name']==name:target_ranges.append((int(s['addr']),int(s['addr'])+max(1,int(s['size'])),name))
+          transfer=re.compile(r'\b(?:CALL|JUMP(?:\.S|\.L)?)\s+(?:0x)?([0-9a-f]+)',re.I)
+          calls=[]
+          for a,l,p,ln in lines:
+              xm=transfer.search(l)
+              if not xm: continue
+              t=int(xm.group(1),16)
+              hit=[{'name':n,'start':hex(lo),'offset':t-lo} for lo,hi,n in target_ranges if lo<=t<hi]
+              if hit:calls.append({'site':hex(a),'site_resolve':resolve(a),'target':hex(t),'target_hit':hit,'text':l})
+          # Locate arithmetic/loads involving descriptor offsets commonly used by LUT loader.
+          tokens=('0x5c','0x58','0x18','0x14','0x10','0x0c','0xc','0x30','0x34','0x38','0x3c','0x40')
+          field_hits=[]
+          for a,l,p,ln in lines:
+              r=resolve(a)
+              names=[] if not r else (r.get('exact') or r.get('nearest') or [])
+              if any(k in ' '.join(names).lower() for k in ('sharp','noise','iso','lutarchive','setstruct','setprocess')) and any(t in l.lower() for t in tokens):
+                  field_hits.append({'addr':hex(a),'resolve':r,'text':l})
+          out={'schema':'mmonochrom.sharpness.consumertrace1a.v1','functions':funcs,'calls_into_focus_functions':calls,'descriptor_offset_hits':field_hits}
+          json.dump(out,open(rt/'mm_sharpness_consumer_trace.json','w'),indent=2)
+          with open(rt/'mm_sharpness_consumer_trace.txt','w') as f:
+              for name,items in funcs.items():
+                  for x in items:f.write(f"\n===== {name} {x['addr']} size={x['size']} =====\n{x['disassembly']}\n")
+              f.write('\n===== CALLS INTO FOCUS FUNCTIONS =====\n'+json.dumps(calls,indent=2)+'\n')
+              f.write('\n===== DESCRIPTOR OFFSET HITS =====\n'+json.dumps(field_hits,indent=2)+'\n')
+          print(json.dumps({'function_counts':{k:len(v) for k,v in funcs.items()},'calls':len(calls),'field_hits':len(field_hits)},indent=2))
+          PY
+
+      - name: Publish derived text evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-SHARPNESS-CONSUMERTRACE1A
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/mmsharp/recovery_meta.json
+            ${{ runner.temp }}/mmsharp/bf561_manifest.json
+            ${{ runner.temp }}/mmsharp/bf0_symbols_blocks.json
+            ${{ runner.temp }}/mmsharp/known_lut_consumers.json
+            ${{ runner.temp }}/mmsharp/mm_sharpness_consumer_trace.json
+            ${{ runner.temp }}/mmsharp/mm_sharpness_consumer_trace.txt
+
+      - name: Remove firmware and binary material
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/mmsharp/m9.upd" "$RUNNER_TEMP/mmsharp/mm.upm" \
+                 "$RUNNER_TEMP/mmsharp/mm.dec" "$RUNNER_TEMP/mmsharp/bf0.bin" \
+                 "$RUNNER_TEMP/mmsharp/bf0.map" "$RUNNER_TEMP/mmsharp/bf1.bin" \
+                 "$RUNNER_TEMP/mmsharp/bf1.map" "$RUNNER_TEMP/mmsharp/blocks"
