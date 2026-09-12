@@ -11,6 +11,7 @@ on:
       - 'tools/pwad.py'
       - 'tools/extract_source1e_targets.py'
       - 'tools/resolve_bfin_calls.py'
+      - 'tools/scan_bfin_callgraph.py'
       - 'tools/verify_source1e_scalar_semantics.py'
       - 'tools/verify_source1e_run_dispatch.py'
 
@@ -139,6 +140,23 @@ jobs:
           done
           python tools/resolve_bfin_calls.py --map "$W/extracted/mm_bf0.map" "${ARGS[@]}" > "$E/direct_calls.json"
           cat "$E/direct_calls.json"
+
+      - name: Scan reverse callers of Run and transfer helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          E="$W/evidence"
+          python tools/scan_bfin_callgraph.py \
+            --ldr "$W/extracted/mm_bf0" \
+            --map "$W/extracted/mm_bf0.map" \
+            --objdump "$OBJDUMP" \
+            --target 0xffa01790 \
+            --target 0xffa120d8 \
+            --target 0xffa122d2 \
+            --target 0xffa02d72 \
+            > "$E/reverse_callers.json"
+          cat "$E/reverse_callers.json"
 
       - name: Record direct references among lineage targets
         shell: bash
