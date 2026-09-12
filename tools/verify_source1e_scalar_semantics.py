@@ -36,11 +36,20 @@ def sha256(path: Path) -> str:
 
 
 def insn_lines(path: Path) -> list[str]:
-    out = []
+    """Return only instruction text from GNU objdump output.
+
+    Blackfin objdump emits address, encoded bytes, and decoded instruction as
+    tab-separated columns.  Parsing the byte field with a hex-token regex is
+    unsafe because valid mnemonics such as ``CC`` also look like hex bytes.
+    """
+    out: list[str] = []
     for raw in path.read_text(errors="replace").splitlines():
-        m = re.match(r"^\s*[0-9a-fA-F]+:\s+(?:[0-9a-fA-F]{2}\s+)+(.+?)\s*$", raw)
-        if m:
-            out.append(m.group(1).strip())
+        parts = raw.split("\t")
+        if len(parts) < 3 or not re.match(r"^\s*[0-9a-fA-F]+:\s*$", parts[0]):
+            continue
+        insn = "\t".join(parts[2:]).strip()
+        if insn:
+            out.append(insn)
     return out
 
 
@@ -170,7 +179,7 @@ def main() -> None:
     py = verify_process_y(args.process_y_bin, args.process_y_dis)
     contrast = verify_contrast(args.contrast_bin, args.contrast_dis)
     out = {
-        "schema": "mmonochrom.source1e.scalar_semantics.v1",
+        "schema": "mmonochrom.source1e.scalar_semantics.v2",
         "scope": "exact_hash_bound_structural_semantics_not_caller_order_or_sensor_producer",
         "process_y": py,
         "process_contrast": contrast,
