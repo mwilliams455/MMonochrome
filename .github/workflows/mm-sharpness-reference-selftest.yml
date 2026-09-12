@@ -49,3 +49,5 @@ jobs:
       - name: Remove firmware material
         if: always()
         run: rm -rf "$RUNNER_TEMP/mmsharpref/m9.upd" "$RUNNER_TEMP/mmsharpref/mm.upm" "$RUNNER_TEMP/mmsharpref/mm.dec"
+
+# REFERENCE1A: intentional push trigger after workflow registration.
