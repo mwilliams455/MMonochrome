@@ -33,7 +33,7 @@ DEFAULT_TARGETS = [
     "InitL1MemoryProcessing", "DMACopyWindow", "L3L1_Get",
     "L3L1_Put16Bit", "L3L1_Put8Bit", "IP_Start", "IP_FinishLines",
     "IP_Finished", "LoadBlemishL1", "CorrectionBlemishes",
-    "CorrectionDualOutput", "Run",
+    "CorrectionDualOutput", "SetProcess", "StartInterpolation_Jolos", "Run",
 ]
 
 
