@@ -1,0 +1,45 @@
+name: M Monochrom BF547 Strings Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/mm-sharpness-lutbank1a
+    paths:
+      - '.github/workflows/mm-bf547-strings-probe.yml'
+      - 'tools/mm_bf547_strings_probe.py'
+      - 'tools/recover_leica_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify scripts
+        run: python3 -m py_compile tools/mm_bf547_strings_probe.py tools/recover_leica_m9_mm_shared_key.py tools/pwad.py
+      - name: Download and decrypt canonical firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mmstrings"
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmstrings/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmstrings/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          python3 tools/recover_leica_m9_mm_shared_key.py "$RUNNER_TEMP/mmstrings/m9.upd" "$RUNNER_TEMP/mmstrings/mm.upm" --mm-out "$RUNNER_TEMP/mmstrings/mm.dec" --meta-out "$RUNNER_TEMP/mmstrings/recovery_meta.json"
+      - name: Search BF547 strings
+        run: python3 tools/mm_bf547_strings_probe.py "$RUNNER_TEMP/mmstrings/mm.dec" --out "$RUNNER_TEMP/mmstrings/bf547_strings.json"
+      - name: Publish derived evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-BF547-STRINGS1A
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/mmstrings/recovery_meta.json
+            ${{ runner.temp }}/mmstrings/bf547_strings.json
+      - name: Remove firmware material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/mmstrings/m9.upd" "$RUNNER_TEMP/mmstrings/mm.upm" "$RUNNER_TEMP/mmstrings/mm.dec"
