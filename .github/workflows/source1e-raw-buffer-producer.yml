@@ -11,6 +11,7 @@ on:
       - 'tools/pwad.py'
       - 'tools/extract_source1e_targets.py'
       - 'tools/resolve_bfin_calls.py'
+      - 'tools/verify_source1e_raw_buffer_slots.py'
 
 permissions:
   contents: read
@@ -71,7 +72,7 @@ jobs:
               (root / 'extracted' / f'mm_{name}').write_bytes(get_lump(fw, ['BF561', name]).data)
           PY
 
-      - name: Extract descriptor producer and raw-buffer consumers
+      - name: Extract descriptor, sensor-transfer and PPI-transfer targets
         shell: bash
         run: |
           set -euo pipefail
@@ -79,7 +80,9 @@ jobs:
           TARGETS=(
             SPI_AppendSettings IM_AppendItem IM_GetRawBuffer IM_GetCurrentJob
             IM_GetHead IM_SetCurrentJob InitInterpolation SPI_SetNextImage
-            SPI_GetStatus SPI_FastPreview SPI_TransferStart PPI_Enable
+            SPI_GetStatus SPI_FastPreview SPI_TransferStart
+            Sensor_InitTransfer Sensor_Enable
+            PPI_Enable PPI_SetupTransfer PPI_SetupTransferLinear PPI_InitMemory2PPITransf
             Task_TaskInterpolation StartInterpolation StartInterpolation_Jolos SetProcess
           )
           ARGS=()
@@ -89,19 +92,40 @@ jobs:
             "${ARGS[@]}" --out-dir "$W/functions" --strict > "$W/evidence/rawbuf_anchors.json"
           cat "$W/evidence/rawbuf_anchors.json"
 
-      - name: Disassemble producer lineage
+      - name: Disassemble producer and transfer lineage
         shell: bash
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/source1e-rawbuf"
           E="$W/evidence"
           A="$E/rawbuf_anchors.json"
-          TARGETS='SPI_AppendSettings IM_AppendItem IM_GetRawBuffer IM_GetCurrentJob IM_GetHead IM_SetCurrentJob InitInterpolation SPI_SetNextImage SPI_GetStatus SPI_FastPreview SPI_TransferStart PPI_Enable Task_TaskInterpolation StartInterpolation StartInterpolation_Jolos SetProcess'
+          TARGETS='SPI_AppendSettings IM_AppendItem IM_GetRawBuffer IM_GetCurrentJob IM_GetHead IM_SetCurrentJob InitInterpolation SPI_SetNextImage SPI_GetStatus SPI_FastPreview SPI_TransferStart Sensor_InitTransfer Sensor_Enable PPI_Enable PPI_SetupTransfer PPI_SetupTransferLinear PPI_InitMemory2PPITransf Task_TaskInterpolation StartInterpolation StartInterpolation_Jolos SetProcess'
           for name in $TARGETS; do
             file="$W/functions/mm_${name}.bin"
             base=$(jq -r --arg n "$name" '.targets[$n].monochrom.address' "$A")
             "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$file" > "$E/mm_${name}.gnu.dis.txt"
           done
+
+      - name: Verify raw-buffer slot and transfer topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-rawbuf"
+          E="$W/evidence"
+          python tools/verify_source1e_raw_buffer_slots.py \
+            --getraw-bin "$W/functions/mm_IM_GetRawBuffer.bin" --getraw-dis "$E/mm_IM_GetRawBuffer.gnu.dis.txt" \
+            --append-bin "$W/functions/mm_IM_AppendItem.bin" --append-dis "$E/mm_IM_AppendItem.gnu.dis.txt" \
+            --ppi-bin "$W/functions/mm_PPI_Enable.bin" --ppi-dis "$E/mm_PPI_Enable.gnu.dis.txt" \
+            --ppisetup-bin "$W/functions/mm_PPI_SetupTransfer.bin" --ppisetup-dis "$E/mm_PPI_SetupTransfer.gnu.dis.txt" \
+            --ppilinear-bin "$W/functions/mm_PPI_SetupTransferLinear.bin" --ppilinear-dis "$E/mm_PPI_SetupTransferLinear.gnu.dis.txt" \
+            --ppimem-bin "$W/functions/mm_PPI_InitMemory2PPITransf.bin" --ppimem-dis "$E/mm_PPI_InitMemory2PPITransf.gnu.dis.txt" \
+            --init-bin "$W/functions/mm_InitInterpolation.bin" --init-dis "$E/mm_InitInterpolation.gnu.dis.txt" \
+            --setprocess-bin "$W/functions/mm_SetProcess.bin" --setprocess-dis "$E/mm_SetProcess.gnu.dis.txt" \
+            --setnext-bin "$W/functions/mm_SPI_SetNextImage.bin" --setnext-dis "$E/mm_SPI_SetNextImage.gnu.dis.txt" \
+            --sensorinit-bin "$W/functions/mm_Sensor_InitTransfer.bin" --sensorinit-dis "$E/mm_Sensor_InitTransfer.gnu.dis.txt" \
+            --sensorenable-bin "$W/functions/mm_Sensor_Enable.bin" --sensorenable-dis "$E/mm_Sensor_Enable.gnu.dis.txt" \
+            --strict > "$E/raw_buffer_slots_verified.json"
+          cat "$E/raw_buffer_slots_verified.json"
 
       - name: Resolve direct calls
         shell: bash
@@ -129,7 +153,7 @@ jobs:
               re.compile(r'\[(?:P\d|FP|SP).*\]', re.I),
               re.compile(r'\b(?:CALL|R[0-7] =|P[0-5] =|\[P[0-5].*\] =)')
           ]
-          out = {'schema':'mmonochrom.source1e.raw_buffer_producer_snippets.v1','files':{}}
+          out = {'schema':'mmonochrom.source1e.raw_buffer_producer_snippets.v2','files':{}}
           for path in sorted(root.glob('mm_*.gnu.dis.txt')):
               rows=[]
               lines=path.read_text(errors='replace').splitlines()
