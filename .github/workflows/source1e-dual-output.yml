@@ -12,6 +12,7 @@ on:
       - 'tools/extract_source1e_targets.py'
       - 'tools/extract_bfin_symbol_occurrences.py'
       - 'tools/resolve_bfin_calls.py'
+      - 'tools/verify_source1e_dual_output.py'
 
 permissions:
   contents: read
@@ -110,6 +111,20 @@ jobs:
             out="${file%.bin}.gnu.dis.txt"
             "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$W/functions/$file" > "$E/$out"
           done < "$W/disasm_jobs.tsv"
+
+      - name: Verify dual-output scalar semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-dual"
+          E="$W/evidence"
+          python tools/verify_source1e_dual_output.py \
+            --run-bin "$W/functions/mm_Run.bin" --run-dis "$E/mm_Run.gnu.dis.txt" \
+            --correction-bin "$W/functions/CorrectionDualOutput__0__0xffa11c8c.bin" --correction-dis "$E/CorrectionDualOutput__0__0xffa11c8c.gnu.dis.txt" \
+            --process0-bin "$W/functions/Process_DualOutputCorrec__0__0xffa11910.bin" --process0-dis "$E/Process_DualOutputCorrec__0__0xffa11910.gnu.dis.txt" \
+            --process1-bin "$W/functions/Process_DualOutputCorrec__1__0xffa00d30.bin" --process1-dis "$E/Process_DualOutputCorrec__1__0xffa00d30.gnu.dis.txt" \
+            --strict > "$E/dual_output_verified.json"
+          cat "$E/dual_output_verified.json"
 
       - name: Resolve direct calls and focused memory-transfer snippets
         shell: bash
