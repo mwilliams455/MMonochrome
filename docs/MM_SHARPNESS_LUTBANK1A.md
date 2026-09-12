@@ -1,249 +1,375 @@
-# M Monochrom SHARPNESS LUTBANK1A
+# M Monochrom SHARPNESS LUTBANK1A — KERNEL / STRENGTH CLOSED
 
-Date: 2026-09-12
-Firmware: original Leica M Monochrom 1.022
+Date: 2026-09-12  
+Firmware: original Leica M Monochrom 1.022  
 Research branch: `research/mm-sharpness-lutbank1a`
 
 ## Status
 
-The canonical `PROCESS/LUTS` range `0x58c..0x105cc` is now directly supported as the original M Monochrom ISO-indexed **sharpness source bank**.
+The original M Monochrom JPEG sharpness data path is now closed far beyond the earlier bank-classification hypothesis.
 
-This is stronger than the earlier geometric/cross-camera hypothesis. The archive header, runtime pointer construction, ISO row loader, sharpness scratch buffer, `Process_Sharpness`, and `UM_Gauss3LUT` call chain now connect without needing a visual guess.
+Firmware-direct evidence connects:
 
-This does **not** yet prove the complete arithmetic performed inside `UM_Gauss3LUT`, the exact meaning of every one of the 2050 signed values, or final photographic ordering relative to every other processing branch.
+```text
+Sharpening menu enum
+-> raw selector 0..4
+-> ISO slot 0..15
+-> modifier code 0..12
+-> exact modifier descriptor / integer scale
+-> selected 2050-word ISO row
+-> signed modified detail LUT
+-> UM_Gauss3LUT
+-> 14-bit scalar output
+```
 
-## Canonical bank geometry
+No generic sharpening model is required for the core arithmetic.
 
-The M Monochrom `PROCESS/LUTS` payload has:
+The remaining implementation gate is exact image argument / border placement around `UM_Gauss3LUT`, not the sharpening transfer function itself.
 
-- ISO count at archive `0x98`: `16`;
-- ISO sequence: `320, 400, 500, 640, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000, 5000, 6400, 8000, 10000`;
-- candidate bank start: `0x58c`;
-- candidate bank end: `0x105cc`;
-- bank size: `65,600` bytes;
-- row count: `16`;
-- values per row: `2050` signed int16;
-- bytes per row: `4100`.
+## Canonical ISO sharpness bank
+
+`PROCESS/LUTS` contains the sharpness source bank at:
+
+```text
+0x58c .. 0x105cc
+```
+
+Geometry:
+
+```text
+16 ISO rows * 2050 signed int16 * 2 bytes = 65,600 bytes
+```
+
+ISO slots:
+
+```text
+0  320
+1  400
+2  500
+3  640
+4  800
+5  1000
+6  1250
+7  1600
+8  2000
+9  2500
+10 3200
+11 4000
+12 5000
+13 6400
+14 8000
+15 10000
+```
+
+`LoadLutArchiveL3` establishes:
+
+```text
+sharp = ctx + 0x460
+sharp+0x08 = PROCESS/LUTS + 0x58c
+sharp+0x14 = 2050
+sharp+0x0c = scratch destination
+sharp+0x00 = sharpening selector
+sharp+0x04 = ISO/selector modifier code
+```
+
+## Canonical Monochrom Sharpening menu — proven directly
+
+A direct BF547 controller trace now proves the M Monochrom menu itself.
+
+Descriptor:
+
+```text
+label       = Sharpening
+control ID  = 0x1005
+type        = 6
+options ptr = 0xde604
+```
+
+Menu mapping:
+
+```text
+enum 0 -> Off
+enum 1 -> Low
+enum 2 -> Standard
+enum 3 -> Medium high
+enum 4 -> High
+```
 
 Therefore:
 
 ```text
-0x105cc - 0x58c
-= 65600 bytes
-= 16 * 2050 * 2
+M Monochrom Sharpening Standard = selector 2
 ```
 
-All 16 rows are distinct.
+This is no longer being borrowed from the M9; it is proven from M Monochrom 1.022 itself.
 
-A separate M9 firmware proof established that its known Sharp bank also uses 2050 signed-int16 values per ISO row. Cross-camera row-shape correlations between the Monochrom candidate bank and the M9 proven Sharp bank are approximately `0.9997..0.999999`, which was strong supporting evidence before the direct consumer trace was closed.
+Menu proof:
 
-Geometry workflow:
+- run: `34688085825`
+- artifact: `MMonochrom-SHARPNESS-MENU1A`
+- BF547 SHA-256: `8f82e5eb08c4933d821ce3df903a14846e300f940fee353514d37cda2c70b621`
 
-- run: `34686147012`
-- artifact: `MMonochrom-LUTBANK-GEOMETRY1A`
+## Selector x ISO modifier matrix — proven
 
-## Archive -> runtime sharpness structure
-
-`LoadLutArchiveL3` copies the first `0x4c` bytes of the archive into its static header structure.
-
-Two canonical header fields matter directly:
+The archive range immediately before the sharpness bank is exactly:
 
 ```text
-archive header +0x10 = 0x408
-archive header +0x14 = 0x58c
+0x410 .. 0x58c
+= 0x17c bytes
+= 5 rows * 19 uint32
 ```
 
-The function uses header `+0x10` as a source offset for a `0x184`-byte copy into runtime `ctx+0x470`.
-
-Canonical archive value:
+The first 16 words of each 19-word row are the physical ISO modifier codes used by `Set`; the last three words are separate row metadata.
 
 ```text
-*(uint32 *)(archive + 0x40c) = 2050
+Off / selector 0:
+0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+Low / selector 1:
+4 4 4 4 2 2 2 2 2 2 2 2 2 2 1 1
+
+Standard / selector 2:
+8 8 8 8 4 4 4 4 4 4 4 4 3 3 2 2
+
+Medium high / selector 3:
+11 11 11 11 8 8 8 8 8 8 8 7 6 5 4 3
+
+High / selector 4:
+12 12 12 12 11 11 11 11 11 11 11 10 9 8 7 6
 ```
 
-lands at:
+Selector 0 always yields code 0. `LoadAndModifySharpnessDa` returns before row copy/modification for code <= 0, matching the proven public `Off` enum.
+
+## Modifier descriptor table — exact values proven
+
+The initial descriptor probe was misleading because each descriptor table straddles two adjacent LDR records: code 0 is the final two bytes of a zero-fill record and codes 1..12 begin in the next initialized record.
+
+Reconstructing the BF0 load image across that boundary produces two mirrored tables with identical values.
+
+Core A base:
 
 ```text
-ctx + 0x474
+0xfeb001e8
 ```
 
-The function also computes:
+Core B base:
 
 ```text
-ctx + 0x468 = archive_base + 0x58c
+0xfeb030b0
 ```
 
-The runtime sharpness structure can therefore be expressed as:
+Exact descriptor table:
 
 ```text
-sharp = ctx + 0x460
+code : descriptor : rational scale
+0    : 0          : disabled
+1    : 1          : 0.25x
+2    : 2          : 0.50x
+3    : 3          : 0.75x
+4    : 4          : 1.00x
+5    : 5          : 1.25x
+6    : 6          : 1.50x
+7    : 7          : 1.75x
+8    : 8          : 2.00x
+9    : 10         : 2.50x
+10   : 12         : 3.00x
+11   : 13         : 3.25x
+12   : 20         : 5.00x
 ```
 
-with the currently closed fields:
+The code intentionally reduces even descriptors before multiply/shift. Exact integer operations are therefore:
 
 ```text
-sharp+0x00 = sharpness selector copied by SetStructParameter
-sharp+0x04 = per-selector/per-ISO modifier code selected by Set
-sharp+0x08 = archive source bank base = PROCESS/LUTS + 0x58c
-sharp+0x0c = destination scratch buffer
-sharp+0x14 = row count = 2050
-sharp+0x18... = modifier lookup-table area used by Set
+code 1:  (x * 1)  >> 2
+code 2:  (x * 1)  >> 1
+code 3:  (x * 3)  >> 2
+code 4:  (x * 1)  >> 0
+code 5:  (x * 5)  >> 2
+code 6:  (x * 3)  >> 1
+code 7:  (x * 7)  >> 2
+code 8:  (x * 2)  >> 0
+code 9:  (x * 5)  >> 1
+code 10: (x * 3)  >> 0
+code 11: (x * 13) >> 2
+code 12: (x * 5)  >> 0
 ```
 
-## ISO indexing
-
-`LoadISODataL1` is **not** the 2050-word row copier.
-
-Its compact implementation selects a small ISO-indexed 32-bit value at approximately:
-
-```text
-base + 0x5c + 4*index
-```
-
-and stores its low word at structure `+0x04`.
-
-The sharpness source-row copier is `LoadAndModifySharpnessDa`.
-
-`SetStructParameter` maps the relevant input setting onto runtime `ctx+0x7c`, which is bounded to `0..15` for the normal path and therefore matches the 16 physical ISO rows. One special input case takes a separate branch; exact external-enum naming remains outside this closure.
-
-## Per-selector/per-ISO modifier selection
-
-`Set` derives the value later read as `sharp+0x04` from both the sharpness selector and ISO slot.
-
-The traced address arithmetic reduces to:
-
-```text
-m = *(sharp+0x00)
-i = *(ctx+0x7c)
-modifier_code = *(uint32 *)(ctx + 0x478 + 76*m + 4*i)
-*(sharp+0x04) = modifier_code
-```
-
-`LoadAndModifySharpnessDa` accepts modifier codes `1..12`. Values outside that interval return before the source-row copy. Code `0` is therefore a disabled/no-load state at this loader boundary, but this alone does not assign the exact public UI label.
-
-## Direct source-row consumer
-
-For core A, `LoadAndModifySharpnessDa` is at `0xffa12f20`.
-
-The function performs the equivalent of:
-
-```text
-count = *(sharp+0x14)
-row_offset_bytes = iso_slot * count * 2
-src = *(sharp+0x08) + row_offset_bytes
-dst = *(sharp+0x0c)
-DMAmemcpy(dst, src, count*2)
-```
-
-With the canonical values this becomes:
-
-```text
-count = 2050
-row bytes = 4100
-src = PROCESS/LUTS + 0x58c + iso_slot*4100
-```
-
-The copied signed-int16 row is then modified in place using the selected modifier descriptor. The traced loop performs signed multiply/shift arithmetic and clamps each value to:
+followed by signed clamp:
 
 ```text
 [-2048, +2048]
 ```
 
-The mirrored core follows the same structure.
+The rational scale is descriptor/4, but the exact reduced multiply/shift form must be retained because signed integer rounding differs across parity classes.
 
-Consumer-trace run:
+Modifier proof:
 
-- run: `34686656586`
-- derived artifact contains the direct call and field evidence.
+- run: `34688023264`
+- artifact: `MMonochrom-SHARPNESS-MODIFIER1A`
+- mirrored tables: identical
+- descriptor sequence: `0,1,2,3,4,5,6,7,8,10,12,13,20`
 
-## Run -> loader -> Process_Sharpness
+## Standard sharpness strength vs ISO
 
-`Run` directly invokes the row loader.
-
-Core A:
-
-```text
-R0 = ctx + 0x460
-R1 = [ctx + 0x7c]
-CALL LoadAndModifySharpnessDa
-```
-
-Later in `Run`, `Process_Sharpness` is called and receives the same `sharp = ctx+0x460` structure through the caller stack.
-
-`Process_Sharpness` reads:
+Because Standard is now proven as selector 2, the native Standard schedule is exact:
 
 ```text
-count = [sharp+0x14]
-table = [sharp+0x0c]
-modifier = [sharp+0x04]
+ISO 320  -> code 8 -> 2.00x
+ISO 400  -> code 8 -> 2.00x
+ISO 500  -> code 8 -> 2.00x
+ISO 640  -> code 8 -> 2.00x
+ISO 800  -> code 4 -> 1.00x
+ISO 1000 -> code 4 -> 1.00x
+ISO 1250 -> code 4 -> 1.00x
+ISO 1600 -> code 4 -> 1.00x
+ISO 2000 -> code 4 -> 1.00x
+ISO 2500 -> code 4 -> 1.00x
+ISO 3200 -> code 4 -> 1.00x
+ISO 4000 -> code 4 -> 1.00x
+ISO 5000 -> code 3 -> 0.75x
+ISO 6400 -> code 3 -> 0.75x
+ISO 8000 -> code 2 -> 0.50x
+ISO 10000-> code 2 -> 0.50x
 ```
 
-The table pointer is therefore the scratch buffer populated from the selected `PROCESS/LUTS + 0x58c` ISO row.
+This confirms an explicit Leica policy of reducing detail correction as ISO rises.
 
-`Process_Sharpness` then calls the named firmware routine:
+## Row loading and modification
+
+`LoadAndModifySharpnessDa` performs:
 
 ```text
-UM_Gauss3LUT
+count = 2050
+src = PROCESS/LUTS + 0x58c + iso_slot * 4100
+dst = scratch
+DMAmemcpy(dst, src, 4100)
 ```
 
-Core A call:
+Then for every signed int16 LUT sample `x`:
 
 ```text
-0xffa028e2 -> 0xffa12fcc  UM_Gauss3LUT
+y = arithmetic_shift_right(x * multiplier(code), shift(code))
+y = clamp(y, -2048, +2048)
 ```
 
-Core B has the mirrored call to its corresponding `UM_Gauss3LUT` instance.
+The modified scratch row is what `Process_Sharpness` passes into `UM_Gauss3LUT`.
 
-This closes the source-bank classification:
+## 2050-word row semantics — helper path closed
+
+`Process_Sharpness` computes:
 
 ```text
-PROCESS/LUTS
-  header +0x14 = 0x58c
-  header +0x10 -> metadata block containing count 2050
-        |
-LoadLutArchiveL3
-        |
-sharp+0x08 = archive + 0x58c
-sharp+0x14 = 2050
-        |
-SetStructParameter / Set
-  ISO slot + sharpness selector -> modifier code
-        |
-Run
-        |
-LoadAndModifySharpnessDa
-  selected 4100-byte ISO row -> scratch
-  signed scale/shift, clamp [-2048,+2048]
-        |
-Run
-        |
-Process_Sharpness
-  reads scratch + count
-        |
-UM_Gauss3LUT
+half = 2050 / 2 = 1025
+bound = half - 1 = 1024
+center_ptr = &table[1024]
+clipMag = -table[0]
 ```
 
-## 2050-word structure: next unresolved detail
-
-`Process_Sharpness` derives a half-count coordinate from `2050`:
+The small firmware helper named `LUT` is now disassembled exactly:
 
 ```text
-2050 / 2 = 1025
+LUT(detail, bound, clipMag, center_ptr):
+    if -bound <= detail <= bound:
+        return int16(center_ptr[detail])
+    if detail > bound:
+        return +clipMag
+    return -clipMag
 ```
 
-and computes a table pointer reaching word index `1024` before calling `UM_Gauss3LUT`.
+Therefore the in-range mapping is:
 
-That is strong evidence that the 2050-word row has an internal two-part / half-row structure, but **the exact interpretation is not yet proven**. It must be resolved from `UM_Gauss3LUT` itself rather than named by analogy.
+```text
+correction = table[1024 + detail]
+for detail in [-1024, +1024]
+```
 
-## Current project consequence
+which addresses table indices:
 
-The Android RAWSCALAR1B source bridge and canonical Monochrom curve02 remain frozen.
+```text
+0 .. 2048
+```
 
-No sharpness LUT has been added to the Android photographic path yet. Firmware research must first close:
+The 2050th word at index `2049` is not read by this LUT helper path. It should be treated as a trailing element unused by this consumer until evidence assigns a broader purpose.
 
-1. `UM_Gauss3LUT` input/output arguments;
-2. exact use of the 2050-word row and the 1025-word half coordinate;
-3. integer widths, signedness, rounding and saturation;
-4. placement/branch conditions needed to reproduce the native operation without importing M9 assumptions.
+The source rows' near-odd symmetry, ISO-dependent zero/deadband and approximately `-1024..+1025` span are therefore consistent with a centered nonlinear detail-transfer table, and that interpretation is now supported by the actual consumer arithmetic rather than shape alone.
 
-Only after those are closed should a firmware-derived Monochrom sharpness stage be considered for an Android A/B implementation.
+## UM_Gauss3LUT arithmetic — core transfer closed
+
+`UM_Gauss3LUT` performs a separable 3-tap Gaussian in two integer stages.
+
+Horizontal stage:
+
+```text
+h = (left + 2*center + right) >> 2
+```
+
+Vertical stage on the horizontal temporary:
+
+```text
+blur = (top + 2*center + bottom) >> 2
+```
+
+The two shifts occur independently. A floating 3x3 Gaussian followed by one division is not bit-equivalent.
+
+Then:
+
+```text
+detail = source - blur
+correction = LUT(detail, 1024, -table[0], &table[1024])
+out = source + correction
+out = clamp(out, 0, 16383)
+```
+
+This proves the sharpness operation is in the 14-bit scalar image domain before the canonical 8-bit contrast curve.
+
+`UM_Gauss3LUT` proof:
+
+- run: `34686903518`
+- artifact: `MMonochrom-UM-GAUSS3LUT-PROBE1A`
+
+LUT-helper proof:
+
+- run: `34687020931`
+- artifact: `MMonochrom-SHARPNESS-LUT-HELPER1A`
+
+## Closed native model
+
+The central photographic operation can now be written as:
+
+```text
+selector = Sharpening enum 0..4
+iso_slot = physical Leica ISO index 0..15
+code = modifier_matrix[selector][iso_slot]
+
+if code == 0:
+    sharpness stage is disabled
+else:
+    base_table = sharpness_bank[iso_slot]
+    table = exact_integer_scale_and_clamp(base_table, code)
+
+    h = horizontal_[1,2,1]_over_4(source)
+    blur = vertical_[1,2,1]_over_4(h)
+    detail = source - blur
+
+    if detail < -1024:
+        correction = -(-table[0])
+    elif detail > 1024:
+        correction = -table[0]
+    else:
+        correction = table[1024 + detail]
+
+    output = clamp14(source + correction)
+```
+
+## Remaining gate before Android A/B
+
+Do **not** yet modify the validated RAWSCALAR1B Android path.
+
+The transfer function, ISO schedule, public menu selector and 14-bit arithmetic are now sufficiently closed. The remaining firmware gate is narrower:
+
+1. resolve `UM_Gauss3LUT` image argument mapping and exact processed rectangle/border behavior;
+2. confirm how width/stride/height are supplied by `Process_Sharpness`;
+3. build a host reference with exact border/stride semantics and frozen vectors;
+4. only then create a controlled Standard-sharpness Android A/B on top of RAWSCALAR1B.
+
+Canonical curve02, RAWSCALAR1B source bridge, LensShadingMap, MHC, JPEG quality, DNG persistence, capture policy and no-HDR rule remain frozen.
