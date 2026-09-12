@@ -1,0 +1,159 @@
+name: SOURCE1E Upstream Scalar Lineage
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/source1e-processy
+    paths:
+      - '.github/workflows/source1e-upstream-lineage.yml'
+      - 'tools/recover_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+      - 'tools/extract_source1e_targets.py'
+      - 'tools/resolve_bfin_calls.py'
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-lineage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install or build GNU Blackfin objdump
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-multiarch curl xz-utils build-essential jq
+          OBJDUMP="$(command -v objdump)"
+          if ! "$OBJDUMP" -i 2>/dev/null | grep -Eiq 'bfin|blackfin'; then
+            cd "$RUNNER_TEMP"
+            curl --fail --location --retry 4 --retry-all-errors -o binutils-2.44.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
+            tar -xf binutils-2.44.tar.xz
+            mkdir -p binutils-build && cd binutils-build
+            ../binutils-2.44/configure --target=bfin-elf --disable-nls --disable-werror --disable-gdb --disable-gas --disable-ld --disable-sim
+            make -j2 all-binutils
+            OBJDUMP="$PWD/binutils/objdump"
+          fi
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
+
+      - name: Download, verify, decrypt Monochrom firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-upstream"
+          mkdir -p "$W/evidence" "$W/extracted" "$W/functions"
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$W/m9.upd" | sha256sum -c --strict
+          echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$W/mm.upm" | sha256sum -c --strict
+          python tools/recover_m9_mm_shared_key.py "$W/m9.upd" "$W/mm.upm" \
+            --m9-out "$W/m9.dec" --mm-out "$W/mm.dec" --meta-out "$W/evidence/recovery_meta.json"
+
+      - name: Extract Monochrom bf0 assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-upstream"
+          PYTHONPATH=tools python - <<'PY'
+          import os
+          from pathlib import Path
+          from pwad import get_lump
+          root = Path(os.environ['RUNNER_TEMP']) / 'source1e-upstream'
+          fw = (root / 'mm.dec').read_bytes()
+          for name in ('bf0', 'bf0.map'):
+              (root / 'extracted' / f'mm_{name}').write_bytes(get_lump(fw, ['BF561', name]).data)
+          PY
+
+      - name: Extract upstream lineage functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-upstream"
+          python tools/extract_source1e_targets.py \
+            --mono-ldr "$W/extracted/mm_bf0" --mono-map "$W/extracted/mm_bf0.map" \
+            --target Task_TaskInterpolation \
+            --target IM_WaitForJob \
+            --target IM_GetHead \
+            --target IM_SetCurrentJob \
+            --target StartInterpolation \
+            --target StartInterpolation_Jolos \
+            --target SetProcess \
+            --target Run \
+            --out-dir "$W/functions" --strict > "$W/evidence/upstream_anchors.json"
+          cat "$W/evidence/upstream_anchors.json"
+
+      - name: Disassemble upstream lineage functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-upstream"
+          E="$W/evidence"
+          A="$E/upstream_anchors.json"
+          TARGETS='Task_TaskInterpolation IM_WaitForJob IM_GetHead IM_SetCurrentJob StartInterpolation StartInterpolation_Jolos SetProcess Run'
+          for name in $TARGETS; do
+            file="$W/functions/mm_${name}.bin"
+            base=$(jq -r --arg n "$name" '.targets[$n].monochrom.address' "$A")
+            "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$file" > "$E/mm_${name}.gnu.dis.txt"
+          done
+
+      - name: Resolve direct calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-upstream"
+          E="$W/evidence"
+          ARGS=()
+          for name in Task_TaskInterpolation IM_WaitForJob IM_GetHead IM_SetCurrentJob StartInterpolation StartInterpolation_Jolos SetProcess Run; do
+            ARGS+=(--disassembly "$E/mm_${name}.gnu.dis.txt")
+          done
+          python tools/resolve_bfin_calls.py --map "$W/extracted/mm_bf0.map" "${ARGS[@]}" > "$E/upstream_direct_calls.json"
+          cat "$E/upstream_direct_calls.json"
+
+      - name: Emit focused descriptor provenance snippets
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-upstream"
+          E="$W/evidence"
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+
+          root = Path(os.environ['RUNNER_TEMP']) / 'source1e-upstream' / 'evidence'
+          files = ['mm_Task_TaskInterpolation.gnu.dis.txt','mm_IM_GetHead.gnu.dis.txt',
+                   'mm_IM_SetCurrentJob.gnu.dis.txt','mm_StartInterpolation.gnu.dis.txt',
+                   'mm_StartInterpolation_Jolos.gnu.dis.txt','mm_SetProcess.gnu.dis.txt']
+          needles = ('0x28','0x2c','0x30','CALL','R0 =','R1 =','R2 =','P0 =','P1 =','P2 =')
+          out = {'schema':'mmonochrom.source1e.upstream_descriptor_snippets.v1','files':{}}
+          for name in files:
+              lines = (root / name).read_text(errors='replace').splitlines()
+              kept = []
+              for i,line in enumerate(lines):
+                  if any(n.lower() in line.lower() for n in needles):
+                      kept.append({'line_number':i+1,'text':line.strip()})
+              out['files'][name] = kept
+          (root / 'descriptor_snippets.json').write_text(json.dumps(out, indent=2) + '\n')
+          print(json.dumps(out, indent=2))
+          PY
+
+      - name: Upload upstream text evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SOURCE1E-UPSTREAM-SCALAR-LINEAGE
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/source1e-upstream/evidence/*
+
+      - name: Remove firmware and binary material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/source1e-upstream"
