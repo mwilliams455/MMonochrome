@@ -1,0 +1,79 @@
+name: M Monochrom LUTBANK GEOMETRY1A
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/mm-sharpness-lutbank1a
+    paths:
+      - '.github/workflows/mm-lutbank-geometry-proof.yml'
+      - 'tools/recover_leica_m9_mm_shared_key.py'
+      - 'tools/mm_lutbank_geometry_probe.py'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify research scripts
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/recover_leica_m9_mm_shared_key.py
+          python3 -m py_compile tools/mm_lutbank_geometry_probe.py
+
+      - name: Download and hash canonical Leica firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mmlutbank"
+          curl --fail --location --retry 4 --retry-all-errors \
+            -o "$RUNNER_TEMP/mmlutbank/m9.upd" \
+            'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors \
+            -o "$RUNNER_TEMP/mmlutbank/mm.upm" \
+            'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$RUNNER_TEMP/mmlutbank/m9.upd" | sha256sum -c --strict
+          echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$RUNNER_TEMP/mmlutbank/mm.upm" | sha256sum -c --strict
+
+      - name: Recover shared key and decrypt both canonical firmwares
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/recover_leica_m9_mm_shared_key.py \
+            "$RUNNER_TEMP/mmlutbank/m9.upd" "$RUNNER_TEMP/mmlutbank/mm.upm" \
+            --m9-out "$RUNNER_TEMP/mmlutbank/m9.dec" \
+            --mm-out "$RUNNER_TEMP/mmlutbank/mm.dec" \
+            --meta-out "$RUNNER_TEMP/mmlutbank/RECOVERY_META.json"
+          echo '4f962bb7799ad9a6745ab36c2a3ba59757bfcbd205f50472ddf1b904a5756d20  '"$RUNNER_TEMP/mmlutbank/m9.dec" | sha256sum -c --strict
+          echo 'c9e14ee475408802c83774f37b19c85c57663d9840e8e4c2cfe80e14dec9a7ae  '"$RUNNER_TEMP/mmlutbank/mm.dec" | sha256sum -c --strict
+
+      - name: Probe canonical Monochrom 16 x 2050-int16 bank
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/mm_lutbank_geometry_probe.py \
+            "$RUNNER_TEMP/mmlutbank/mm.dec" "$RUNNER_TEMP/mmlutbank/m9.dec" \
+            --out "$RUNNER_TEMP/mmlutbank/MM_LUTBANK_GEOMETRY_PROBE.json"
+          cat "$RUNNER_TEMP/mmlutbank/MM_LUTBANK_GEOMETRY_PROBE.json"
+
+      - name: Publish derived evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-LUTBANK-GEOMETRY1A
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/mmlutbank/RECOVERY_META.json
+            ${{ runner.temp }}/mmlutbank/MM_LUTBANK_GEOMETRY_PROBE.json
+
+      - name: Remove firmware bytes
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/mmlutbank/m9.upd" "$RUNNER_TEMP/mmlutbank/mm.upm" \
+                "$RUNNER_TEMP/mmlutbank/m9.dec" "$RUNNER_TEMP/mmlutbank/mm.dec"
