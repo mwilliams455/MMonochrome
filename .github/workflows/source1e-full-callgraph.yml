@@ -1,0 +1,208 @@
+name: SOURCE1E Full BF0 Direct Callgraphs
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/source1e-processy
+    paths:
+      - '.github/workflows/source1e-full-callgraph.yml'
+      - 'tools/recover_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+      - 'tools/scan_bfin_callgraph.py'
+
+permissions:
+  contents: read
+
+jobs:
+  full-callgraphs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install or build GNU Blackfin objdump
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-multiarch curl xz-utils build-essential jq
+          OBJDUMP="$(command -v objdump)"
+          if ! "$OBJDUMP" -i 2>/dev/null | grep -Eiq 'bfin|blackfin'; then
+            cd "$RUNNER_TEMP"
+            curl --fail --location --retry 4 --retry-all-errors -o binutils-2.44.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
+            tar -xf binutils-2.44.tar.xz
+            mkdir -p binutils-build && cd binutils-build
+            ../binutils-2.44/configure --target=bfin-elf --disable-nls --disable-werror --disable-gdb --disable-gas --disable-ld --disable-sim
+            make -j2 all-binutils
+            OBJDUMP="$PWD/binutils/objdump"
+          fi
+          "$OBJDUMP" --version | head -1
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
+
+      - name: Download and decrypt canonical firmware pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-fullcg"
+          mkdir -p "$W/evidence" "$W/extracted"
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$W/m9.upd" | sha256sum -c --strict
+          echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$W/mm.upm" | sha256sum -c --strict
+          python tools/recover_m9_mm_shared_key.py "$W/m9.upd" "$W/mm.upm" \
+            --m9-out "$W/m9.dec" --mm-out "$W/mm.dec" --meta-out "$W/evidence/recovery_meta.json"
+
+      - name: Extract canonical BF561 bf0 assets and active-M9 boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-fullcg"
+          PYTHONPATH=tools python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from pwad import get_lump
+
+          root = Path(os.environ['RUNNER_TEMP']) / 'source1e-fullcg'
+          out = root / 'extracted'
+          ev = root / 'evidence'
+          for camera in ('mm', 'm9'):
+              fw = (root / f'{camera}.dec').read_bytes()
+              for name in ('bf0', 'bf0.map'):
+                  (out / f'{camera}_{name}').write_bytes(get_lump(fw, ['BF561', name]).data)
+
+          mm_map = (out / 'mm_bf0.map').read_bytes()
+          m9_map = (out / 'm9_bf0.map').read_bytes()
+          boundary = m9_map.find(mm_map)
+          if boundary < 0 or boundary % 32:
+              raise SystemExit(f'invalid active-M9 boundary: {boundary}')
+          meta = {
+              'schema': 'mmonochrom.source1e.full_callgraph_inputs.v1',
+              'mm_record_count': len(mm_map) // 32,
+              'm9_total_record_count': len(m9_map) // 32,
+              'm9_active_map_end': f'0x{boundary:x}',
+              'm9_active_record_count': boundary // 32,
+              'm9_embedded_monochrom_record_count': len(mm_map) // 32,
+          }
+          (ev / 'callgraph_input_meta.json').write_text(json.dumps(meta, indent=2) + '\n')
+          print(json.dumps(meta, indent=2))
+          PY
+
+      - name: Build full Monochrom direct-call graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-fullcg"
+          python tools/scan_bfin_callgraph.py \
+            --ldr "$W/extracted/mm_bf0" \
+            --map "$W/extracted/mm_bf0.map" \
+            --objdump "$OBJDUMP" \
+            --include-all-edges \
+            > "$W/evidence/mm_bf0_direct_callgraph.json"
+          jq '{eligible_map_record_count,unique_disassembled_slice_count,edge_count:(.edges|length),problem_count}' "$W/evidence/mm_bf0_direct_callgraph.json"
+
+      - name: Build full active-M9 direct-call graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-fullcg"
+          M9_END=$(jq -r '.m9_active_map_end' "$W/evidence/callgraph_input_meta.json")
+          python tools/scan_bfin_callgraph.py \
+            --ldr "$W/extracted/m9_bf0" \
+            --map "$W/extracted/m9_bf0.map" \
+            --map-end "$M9_END" \
+            --objdump "$OBJDUMP" \
+            --include-all-edges \
+            > "$W/evidence/m9_active_bf0_direct_callgraph.json"
+          jq '{eligible_map_record_count,unique_disassembled_slice_count,edge_count:(.edges|length),problem_count}' "$W/evidence/m9_active_bf0_direct_callgraph.json"
+
+      - name: Derive focused reverse-call provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-fullcg"
+          python - <<'PY'
+          import json, os
+          from collections import defaultdict, deque
+          from pathlib import Path
+
+          root = Path(os.environ['RUNNER_TEMP']) / 'source1e-fullcg' / 'evidence'
+          specs = {
+              'monochrom': (
+                  root / 'mm_bf0_direct_callgraph.json',
+                  {
+                      'Run': '0xffa01790',
+                      'StartInterpolation_Jolos': '0xffa0377c',
+                      'SetProcess': '0xffa127d0',
+                      'L3L1_Get': '0xffa122d2',
+                  },
+              ),
+              'm9_active': (
+                  root / 'm9_active_bf0_direct_callgraph.json',
+                  {
+                      'Run': '0xffa10320',
+                      'Process_FPGA_Y': '0xfeb111c8',
+                      'Process_FPGA_YCrCb': '0xffa03090',
+                      'Process_WB': '0xffa02e90',
+                      'ExecuteColorMatrix_14FM1': '0xffa00cc4',
+                  },
+              ),
+          }
+          out = {'schema': 'mmonochrom.source1e.focused_reverse_calls.v1', 'graphs': {}}
+          for label, (path, targets) in specs.items():
+              graph = json.loads(path.read_text())
+              edges = graph['edges']
+              reverse = defaultdict(list)
+              for e in edges:
+                  reverse[e['target']].append(e)
+              section = {'targets': {}, 'reverse_ancestors_of_run': []}
+              for name, addr in targets.items():
+                  section['targets'][name] = {
+                      'address': addr,
+                      'callers': reverse.get(addr, []),
+                  }
+              # Walk direct-call ancestors of Run, preserving first-seen depth.
+              run = targets['Run']
+              q = deque([(run, 0)])
+              seen = {run}
+              ancestors = []
+              while q:
+                  current, depth = q.popleft()
+                  for e in reverse.get(current, []):
+                      src_records = e.get('source_records', [])
+                      if not src_records:
+                          continue
+                      src = src_records[0]['address']
+                      ancestors.append({
+                          'depth': depth + 1,
+                          'callee': current,
+                          'caller_address': src,
+                          'caller_names': [r['name'] for r in src_records],
+                          'call_site': e['call_site'],
+                      })
+                      if src not in seen and depth < 8:
+                          seen.add(src)
+                          q.append((src, depth + 1))
+              section['reverse_ancestors_of_run'] = ancestors
+              out['graphs'][label] = section
+          (root / 'focused_reverse_calls.json').write_text(json.dumps(out, indent=2) + '\n')
+          print(json.dumps(out, indent=2))
+          PY
+
+      - name: Upload callgraph evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SOURCE1E-FULL-BF0-CALLGRAPHS
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/source1e-fullcg/evidence/*.json
+
+      - name: Remove firmware and extracted binary material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/source1e-fullcg"
