@@ -12,6 +12,7 @@ on:
       - 'tools/extract_source1e_targets.py'
       - 'tools/resolve_bfin_calls.py'
       - 'tools/verify_source1e_scalar_semantics.py'
+      - 'tools/verify_source1e_run_dispatch.py'
 
 permissions:
   contents: read
@@ -85,21 +86,22 @@ jobs:
             --out-dir "$W/functions" \
             --strict > "$W/evidence/function_anchors.json"
 
-      - name: Disassemble scalar targets and Run
+      - name: Disassemble scalar and transfer lineage targets
         shell: bash
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/source1e-calls"
           E="$W/evidence"
           A="$E/function_anchors.json"
-          for name in Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Run; do
+          TARGETS='Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Process_Blinker InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start Run'
+          for name in $TARGETS; do
             file="$W/functions/mm_${name}.bin"
             base=$(jq -r --arg n "$name" '.targets[$n].monochrom.address // empty' "$A")
             [ -f "$file" ] && [ -n "$base" ] || { echo "missing $name function anchor" >&2; exit 1; }
             "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$file" > "$E/mm_${name}.gnu.dis.txt"
           done
 
-      - name: Verify pinned Process_Y and Contrast semantics
+      - name: Verify pinned scalar semantics
         shell: bash
         run: |
           set -euo pipefail
@@ -113,23 +115,32 @@ jobs:
             --strict > "$E/scalar_semantics.json"
           cat "$E/scalar_semantics.json"
 
+      - name: Verify Run dispatch order
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          E="$W/evidence"
+          python tools/verify_source1e_run_dispatch.py \
+            --run-bin "$W/functions/mm_Run.bin" \
+            --run-dis "$E/mm_Run.gnu.dis.txt" \
+            --strict > "$E/run_dispatch.json"
+          cat "$E/run_dispatch.json"
+
       - name: Resolve direct calls to bf0 fixed records
         shell: bash
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/source1e-calls"
           E="$W/evidence"
-          python tools/resolve_bfin_calls.py \
-            --map "$W/extracted/mm_bf0.map" \
-            --disassembly "$E/mm_Process_Y.gnu.dis.txt" \
-            --disassembly "$E/mm_L3L1_Put8BitY.gnu.dis.txt" \
-            --disassembly "$E/mm_Process_Shading.gnu.dis.txt" \
-            --disassembly "$E/mm_Process_Contrast.gnu.dis.txt" \
-            --disassembly "$E/mm_Run.gnu.dis.txt" \
-            > "$E/direct_calls.json"
+          ARGS=()
+          for name in Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Process_Blinker InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start Run; do
+            ARGS+=(--disassembly "$E/mm_${name}.gnu.dis.txt")
+          done
+          python tools/resolve_bfin_calls.py --map "$W/extracted/mm_bf0.map" "${ARGS[@]}" > "$E/direct_calls.json"
           cat "$E/direct_calls.json"
 
-      - name: Record direct references among scalar targets
+      - name: Record direct references among lineage targets
         shell: bash
         run: |
           set -euo pipefail
@@ -145,13 +156,18 @@ jobs:
               for name, item in a['targets'].items()
               if item.get('monochrom')
           }
+          sources = (
+              'Process_Y','L3L1_Put8BitY','Process_Shading','Process_Contrast','Process_Blinker',
+              'InitL1MemoryProcessing','DMACopyWindow','L3L1_Get','L3L1_Put16Bit','L3L1_Put8Bit',
+              'IP_Start','Run'
+          )
           report = {
-              'schema': 'mmonochrom.source1e.scalar_direct_refs.v2',
+              'schema': 'mmonochrom.source1e.scalar_direct_refs.v3',
               'normalization': 'GNU Blackfin doubled 0x prefix collapsed before exact address matching',
               'targets': addresses,
               'references': {},
           }
-          for source in ('Process_Y','L3L1_Put8BitY','Process_Shading','Process_Contrast','Run'):
+          for source in sources:
               text = (e / f'mm_{source}.gnu.dis.txt').read_text(errors='replace').lower().replace('0x0x', '0x')
               hits = {}
               for target, addr in addresses.items():
