@@ -1,0 +1,219 @@
+name: Build MMonochrom SHARPSTD1B ISO Bridge A/B
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - apk/mono1a-rawscalar1b-sharpstd1b-isobridgeab1a
+    paths:
+      - 'apk/mono1a/**'
+      - 'tools/generate_mm_standard_sharp_header.py'
+      - 'tools/recover_leica_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+      - '.github/workflows/build-mono1a-sharpstd1b-isobridgeab1a.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Verify overlay scripts
+        run: |
+          set -euo pipefail
+          test "$(git -C m9base rev-parse HEAD)" = "fb1db92ef78df70442b9fee879795e584f2170cf"
+          python3 -m py_compile apk/mono1a/apply-mono1a.py apk/mono1a/apply-source1d.py apk/mono1a/apply-rawscalar1a.py apk/mono1a/apply-rawscalar1b.py apk/mono1a/promote-rawscalar1b.py apk/mono1a/apply-sharpstd1a.py apk/mono1a/apply-sharpstd1b-isobridgeab1a.py
+          python3 -m py_compile tools/generate_mm_standard_sharp_header.py tools/recover_leica_m9_mm_shared_key.py tools/pwad.py
+          cat > SHARPSTD1B_UPSTREAM.txt <<'EOF'
+          M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf
+          M9_SUCCESSFUL_REFERENCE_RUN=34610280688
+          MM_CURVE02_SHA256=7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752
+          MM_SHARP_BANK_SHA256=282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10
+          SOURCE_REVISION=MONO1A_RAWSCALAR1B_SHARPSTD1B_ISOBRIDGEAB1A
+          BASELINE_POLICY=RAWSCALAR1B_PROMOTED1A_PRIMARY_UNCHANGED
+          PHYSICAL_SHARP_POLICY=SHARPSTD1A_UNCHANGED
+          NORMISO_POLICY=PHOTON_ISO100_RECONSTRUCTED_FROM_CAPTURE_ISO_AND_SENSOR_ISO_LOW
+          EOF
+
+      - name: Verify frozen M9 patch syntax
+        working-directory: m9base
+        run: |
+          set -euo pipefail
+          python3 -m py_compile patches/apply-m9cam-basishsm1p-demosaicmhc1a.py patches/fix-m9cam-basishsm1p-demosaicmhc1a-lifetime1a.py patches/verify-m9cam-basishsm1p-demosaicmhc1a.py
+          python3 -m py_compile patches/apply-m9cam-basishsm1p-demosaicab1a.py patches/verify-m9cam-basishsm1p-demosaicab1a.py patches/apply-m9cam-basishsm1p-demosaicmhcneutral1a.py patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a.py
+          python3 -m py_compile patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py
+
+      - name: Replay exact frozen M9 parent assembly
+        working-directory: m9base
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GITHUB_WORKSPACE="$PWD"
+          python3 - <<'PY'
+          from pathlib import Path
+          wf=Path('.github/workflows/build-m9cam-basishsm1p-curvedomain1c-upstreamaxis1a.yml')
+          lines=wf.read_text().splitlines()
+          names=['Replay exact CURVEDOMAIN1B parent assembly','Apply CURVEDOMAIN1C UPSTREAMAXIS1A read-only extension']
+          for idx,name in enumerate(names):
+              target='      - name: '+name; i=lines.index(target)
+              while i<len(lines) and lines[i].strip()!='run: |': i+=1
+              if i>=len(lines): raise SystemExit('parent run block missing: '+name)
+              i+=1; out=[]
+              while i<len(lines):
+                  line=lines[i]
+                  if line.startswith('      - name:'): break
+                  if line.startswith('          '): out.append(line[10:])
+                  elif not line.strip(): out.append('')
+                  else: raise SystemExit('unexpected parent indentation: '+line)
+                  i+=1
+              Path(f'/tmp/mono_sharp_parent_{idx}.sh').write_text('\n'.join(out)+'\n')
+          PY
+          for s in /tmp/mono_sharp_parent_*.sh; do bash "$s"; done
+
+      - name: Apply validated frozen MHC demosaic chain
+        working-directory: m9base
+        run: |
+          set -euxo pipefail
+          ROOT="$PWD/PhotonCamera"
+          python3 patches/apply-m9cam-basishsm1p-demosaicmhc1a.py "$ROOT"
+          python3 patches/fix-m9cam-basishsm1p-demosaicmhc1a-lifetime1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhc1a.py "$ROOT"
+          python3 patches/apply-m9cam-basishsm1p-demosaicab1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicab1a.py "$ROOT"
+          python3 patches/apply-m9cam-basishsm1p-demosaicmhcneutral1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a.py "$ROOT"
+          python3 patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
+
+      - name: Apply validated M Monochrom RAWSCALAR1B baseline
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-mono1a.py "$ROOT"
+          python3 apk/mono1a/apply-source1d.py "$ROOT"
+          python3 apk/mono1a/apply-rawscalar1a.py "$ROOT"
+          python3 apk/mono1a/apply-rawscalar1b.py "$ROOT"
+          python3 apk/mono1a/promote-rawscalar1b.py "$ROOT"
+
+      - name: Generate canonical Standard sharpness LUT header
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          mkdir -p "$RUNNER_TEMP/mmsharp"
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmsharp/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmsharp/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          python3 tools/recover_leica_m9_mm_shared_key.py "$RUNNER_TEMP/mmsharp/m9.upd" "$RUNNER_TEMP/mmsharp/mm.upm" --mm-out "$RUNNER_TEMP/mmsharp/mm.dec" --meta-out "$RUNNER_TEMP/mmsharp/recovery_meta.json"
+          python3 tools/generate_mm_standard_sharp_header.py "$RUNNER_TEMP/mmsharp/mm.dec" --out "$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc" | tee SHARPSTD1B_LUT_GENERATION.txt
+          grep -q 'bank_sha256=282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10' SHARPSTD1B_LUT_GENERATION.txt
+          rm -f "$RUNNER_TEMP/mmsharp/m9.upd" "$RUNNER_TEMP/mmsharp/mm.upm" "$RUNNER_TEMP/mmsharp/mm.dec"
+
+      - name: Apply frozen physical-ISO SHARPSTD1A
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-sharpstd1a.py "$ROOT"
+
+      - name: Apply same-RAW Photon-normalized ISO bridge A/B
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-sharpstd1b-isobridgeab1a.py "$ROOT"
+
+      - name: Verify primary and firmware math frozen
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          R="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java"
+          N="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java"
+          C="$ROOT/app/src/main/cpp/m9color_jni.cpp"
+          H="$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc"
+          G="$ROOT/app/build.gradle"
+          grep -n 'monochromPrimarySource.*RAWSCALAR1B_FIXED_D65' "$R"
+          grep -n 'SHARPSTD1A' "$R" "$C"
+          grep -n 'SHARPSTD1B_NORMISO' "$R"
+          grep -n 'Photon_ISO100_normalization_reconstructed_from_same_capture' "$R"
+          grep -n 'normalizedIso=(int)(captureIso' "$R"
+          grep -n '_MONO_RAWSCALAR1B_SHARPSTD1A.jpg' "$R"
+          grep -n '_MONO_RAWSCALAR1B_SHARPSTD1A_NORMISO.jpg' "$R"
+          test "$(grep -c 'renderMonochrome1ARawScalarSharpStdDirectBitmap(' "$R")" -eq 2
+          grep -n 'renderMonochrome1ARawScalarSharpStdDirectBitmap' "$N" "$C"
+          grep -n 'MM_MONO_STD_SHARP_BORDER = 2' "$H"
+          grep -n 'MM_MONO_STD_SHARP_CODES\[16\].*8,8,8,8,4,4,4,4,4,4,4,4,3,3,2,2' "$H"
+          grep -n 'sharpBankSha256.*282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10' "$R"
+          grep -n 'applicationId.*com.m9project.mmonochrome.photon' "$G"
+
+      - name: Snapshot assembled source
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          mkdir -p sharpstd1b-isobridgeab1a-assembled-source
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" sharpstd1b-isobridgeab1a-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java" sharpstd1b-isobridgeab1a-assembled-source/
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" sharpstd1b-isobridgeab1a-assembled-source/
+          cp "$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc" sharpstd1b-isobridgeab1a-assembled-source/
+          cp "$ROOT/app/build.gradle" sharpstd1b-isobridgeab1a-assembled-source/app-build.gradle
+          cp SHARPSTD1B_UPSTREAM.txt SHARPSTD1B_LUT_GENERATION.txt sharpstd1b-isobridgeab1a-assembled-source/
+          sha256sum sharpstd1b-isobridgeab1a-assembled-source/* | tee sharpstd1b-isobridgeab1a-assembled-source/SHA256SUMS.txt
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+      - name: Build SHARPSTD1B ISO bridge A/B debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/SHARPSTD1B_ISOBRIDGEAB1A_GRADLE.log"
+      - name: Record APK SHA256
+        if: success()
+        run: sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee SHARPSTD1B_ISOBRIDGEAB1A_APK_SHA256.txt
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-SHARPSTD1B-ISOBRIDGEAB1A-BUILDLOG
+          path: SHARPSTD1B_ISOBRIDGEAB1A_GRADLE.log
+          if-no-files-found: ignore
+      - name: Upload assembled source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-SHARPSTD1B-ISOBRIDGEAB1A-ASSEMBLED-SOURCE
+          path: sharpstd1b-isobridgeab1a-assembled-source/
+          if-no-files-found: ignore
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-RAWSCALAR1B-SHARPSTD1B-ISOBRIDGEAB1A
+          path: |
+            m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
+            SHARPSTD1B_ISOBRIDGEAB1A_APK_SHA256.txt
+            SHARPSTD1B_UPSTREAM.txt
+          if-no-files-found: error
