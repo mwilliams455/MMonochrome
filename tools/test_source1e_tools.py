@@ -7,7 +7,8 @@ that must be trustworthy *before* real firmware assets are fed into it:
 - fixed-width 32-byte BF561 map record parsing;
 - the legacy 299/300/299 name-set fingerprint helper;
 - LDR block parsing and overlay byte extraction;
-- exact function slicing / hashing primitives used by SOURCE1E.
+- exact function slicing / hashing primitives used by SOURCE1E;
+- shared-BODY repeating-XOR key recovery algebra on synthetic ciphertexts.
 
 The tests intentionally do not assert any Leica photographic semantics.
 """
@@ -20,6 +21,7 @@ import unittest
 from pathlib import Path
 
 import extract_source1e_targets as extract
+import recover_m9_mm_shared_key as recovery
 import trace_scalar_topology as topology
 
 
@@ -118,6 +120,35 @@ class ExtractorHelpersTest(unittest.TestCase):
         ]
         with self.assertRaises(RuntimeError):
             extract.read_overlay(blocks, 0x1000, 6)
+
+
+class SharedKeyRecoveryTest(unittest.TestCase):
+    def test_shared_body_cycle_recovers_full_synthetic_key(self) -> None:
+        # Use the real structural offsets/period but entirely synthetic bytes.
+        # This guards the equation graph and PWAD seed-selection logic without
+        # embedding or downloading any Leica material.
+        key = bytes((19 + 73 * i) & 0xFF for i in range(recovery.PERIOD))
+        shared = bytes((31 + 29 * i) & 0xFF for i in range(recovery.PERIOD))
+
+        m9_plain = bytearray(recovery.M9_BODY_OFFSET + recovery.PERIOD)
+        mm_plain = bytearray(recovery.MM_BODY_OFFSET + recovery.PERIOD)
+        m9_plain[:4] = b"PWAD"
+        mm_plain[:4] = b"PWAD"
+        m9_plain[
+            recovery.M9_BODY_OFFSET : recovery.M9_BODY_OFFSET + recovery.PERIOD
+        ] = shared
+        mm_plain[
+            recovery.MM_BODY_OFFSET : recovery.MM_BODY_OFFSET + recovery.PERIOD
+        ] = shared
+
+        m9_cipher = recovery.decrypt(bytes(m9_plain), key)
+        mm_cipher = recovery.decrypt(bytes(mm_plain), key)
+        recovered, delta, seed = recovery.recover_key(m9_cipher, mm_cipher)
+
+        self.assertEqual(recovered, key)
+        self.assertEqual(delta, (recovery.MM_BODY_OFFSET - recovery.M9_BODY_OFFSET) % recovery.PERIOD)
+        self.assertEqual(seed, key[0])
+        self.assertEqual(recovery.decrypt(m9_cipher[:4], recovered), b"PWAD")
 
 
 if __name__ == "__main__":
