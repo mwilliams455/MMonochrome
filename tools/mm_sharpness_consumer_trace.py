@@ -2,7 +2,7 @@
 """Trace original M Monochrom BF561 sharpness-related consumers.
 
 Input is the canonical *decrypted* M Monochrom 1.022 updater and a Blackfin
-objdump.  Output is derived text/JSON evidence only.  No firmware bytes are
+objdump. Output is derived text/JSON evidence only. No firmware bytes are
 embedded in the report.
 """
 from __future__ import annotations
@@ -16,14 +16,14 @@ import re
 import struct
 import subprocess
 import sys
-from typing import Iterable
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import pwad  # noqa: E402
 
 MM_DEC_SHA = "c9e14ee475408802c83774f37b19c85c57663d9840e8e4c2cfe80e14dec9a7ae"
 FOCUS = (
-    "Process_Sharpness", "Process_Noise", "Process_Shading", "Process_Contrast",
+    "Process_Sharpness", "LoadAndModifySharpnessDa",
+    "Process_Noise", "Process_Shading", "Process_Contrast",
     "LoadISODataL1", "LoadLutArchiveL3", "CalculateNoiseParameter",
     "SetStructParameter", "SetProcess", "Set", "Run",
 )
@@ -102,7 +102,6 @@ def main() -> None:
         raise SystemExit("outer BF561 missing")
     children=pwad.parse_pwad(bf.data)
     cmap={l.name.lower():l for l in children}
-    # Canonical archive names are bf0, bf1, bf0.map, bf1.map (no .bin suffix).
     if "bf0" not in cmap or "bf0.map" not in cmap:
         raise SystemExit(f"BF561 children missing bf0/map: {sorted(cmap)}")
     ldr=cmap["bf0"].data; mp=cmap["bf0.map"].data
@@ -135,10 +134,10 @@ def main() -> None:
                 funcs[name].append({"addr":hex(int(s["addr"])),"size":int(s["size"]),
                                     "disassembly":func_text(s)})
 
-    # Blackfin binutils usually prints absolute branch targets either as hex or
-    # angle-bracketed numeric addresses.  Accept both forms conservatively.
+    # Binutils prints these targets as e.g. "CALL 0x0xffa0287c" in this target,
+    # so accept an optional doubled 0x prefix as well as normal absolute hex.
     transfer_patterns=[
-        re.compile(r"\b(?:call|jump(?:\.s|\.l)?)\s+(?:0x)?([0-9a-fA-F]+)\b",re.I),
+        re.compile(r"\b(?:call|jump(?:\.s|\.l)?)\s+(?:0x0x|0x)?([0-9a-fA-F]+)\b",re.I),
         re.compile(r"\b(?:call|jump(?:\.s|\.l)?)\b.*?<([0-9a-fA-F]+)>",re.I),
     ]
     focus_ranges=[]
@@ -157,11 +156,10 @@ def main() -> None:
         hit=[{"name":n,"start":hex(lo),"offset":target-lo} for lo,hi,n in focus_ranges if lo<=target<hi]
         if hit:
             calls.append({"site":hex(addr),"site_resolve":resolve(addr),"target":hex(target),
-                          "target_hit":hit,"text":line})
+                          "target_resolve":resolve(target),"target_hit":hit,"text":line})
 
-    # Search high-value function bodies for descriptor/structure offsets and
-    # immediate constants.  This remains evidence, not semantic naming.
-    offset_tokens=("0x5c","0x58","0x18","0x14","0x10","0xc","0x0c","0x30","0x34","0x38","0x3c","0x40")
+    offset_tokens=("0x5c","0x58","0x18","0x14","0x10","0xc","0x0c","0x30","0x34","0x38","0x3c","0x40",
+                   "0x460","0x468","0x7c","0x84","0x818")
     field_hits=[]
     focus_words=("sharp","noise","iso","lutarchive","setstruct","setprocess")
     for addr,line,src,ln in lines:
@@ -170,24 +168,42 @@ def main() -> None:
         if any(k in " ".join(names).lower() for k in focus_words) and any(tok in line.lower() for tok in offset_tokens):
             field_hits.append({"addr":hex(addr),"resolve":r,"text":line})
 
-    # Directly search for code immediates matching the 2050-sample / 4100-byte
-    # sharpness-bank geometry.  Absence is not disproof because compilers can
-    # synthesize constants.
     geometry_hits=[]
     for addr,line,src,ln in lines:
         ll=line.lower()
         if any(tok in ll for tok in ("2050","0x802","4100","0x1004")):
             geometry_hits.append({"addr":hex(addr),"resolve":resolve(addr),"text":line})
 
+    # Explicitly report all calls whose site is inside the two sharpness functions,
+    # even if the destination is not a named function entry. This exposes internal
+    # helper/secondary-entry relationships without assigning semantics by guess.
+    sharp_ranges=[]
+    for s in syms:
+        if s["name"] in ("Process_Sharpness","LoadAndModifySharpnessDa"):
+            sharp_ranges.append((int(s["addr"]),int(s["addr"])+max(1,int(s["size"])),s["name"]))
+    sharp_calls=[]
+    for addr,line,src,ln in lines:
+        if not any(lo<=addr<hi for lo,hi,_ in sharp_ranges):
+            continue
+        target=None
+        for pat in transfer_patterns:
+            m=pat.search(line)
+            if m:
+                target=int(m.group(1),16); break
+        if target is not None:
+            sharp_calls.append({"site":hex(addr),"site_owner":[n for lo,hi,n in sharp_ranges if lo<=addr<hi],
+                                "target":hex(target),"target_resolve":resolve(target),"text":line})
+
     manifest={"bf561_sha256":bf.sha256,"children":[{"name":l.name,"size":l.size,"sha256":l.sha256} for l in children],
               "bf0_symbol_count":len(syms),"bf0_block_count":len(blocks)}
     report={
-        "schema":"mmonochrom.sharpness.consumertrace1b.v1",
+        "schema":"mmonochrom.sharpness.consumertrace1c.v1",
         "firmware_decrypted_sha256":sha(fw),
         "bf561_manifest":manifest,
         "focus_symbols":[{"name":s["name"],"addr":hex(int(s["addr"])),"size":int(s["size"])} for s in syms if s["name"] in FOCUS],
         "functions":funcs,
         "calls_into_focus_functions":calls,
+        "sharpness_owned_calls":sharp_calls,
         "descriptor_offset_hits":field_hits,
         "geometry_constant_hits":geometry_hits,
         "classification":"disassembly_evidence_only_semantics_require_manual_or_crosscamera_closure",
@@ -198,14 +214,15 @@ def main() -> None:
         for name,items in funcs.items():
             for item in items:
                 f.write(f"\n===== {name} {item['addr']} size={item['size']} =====\n{item['disassembly']}\n")
-        f.write("\n===== CALLS =====\n"+json.dumps(calls,indent=2)+"\n")
+        f.write("\n===== CALLS INTO FOCUS =====\n"+json.dumps(calls,indent=2)+"\n")
+        f.write("\n===== SHARPNESS-OWNED CALLS =====\n"+json.dumps(sharp_calls,indent=2)+"\n")
         f.write("\n===== FIELD HITS =====\n"+json.dumps(field_hits,indent=2)+"\n")
         f.write("\n===== GEOMETRY CONSTANT HITS =====\n"+json.dumps(geometry_hits,indent=2)+"\n")
-    # Remove local binary work before artifact publication.
     for p in work.iterdir(): p.unlink()
     work.rmdir()
     print(json.dumps({"focus_counts":{k:len(v) for k,v in funcs.items()},"calls":len(calls),
-                      "field_hits":len(field_hits),"geometry_hits":len(geometry_hits)},indent=2))
+                      "sharpness_owned_calls":len(sharp_calls),"field_hits":len(field_hits),
+                      "geometry_hits":len(geometry_hits)},indent=2))
 
 
 if __name__=="__main__":
