@@ -1,0 +1,68 @@
+name: M Monochrom BF547 AppendSettings Client Trace
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/mm-sharpness-lutbank1a
+    paths:
+      - '.github/workflows/mm-bf547-appendsettings-client-trace.yml'
+      - 'tools/mm_bf547_appendsettings_client_trace.py'
+      - 'tools/recover_leica_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify scripts
+        run: python3 -m py_compile tools/mm_bf547_appendsettings_client_trace.py tools/recover_leica_m9_mm_shared_key.py tools/pwad.py
+      - name: Install or build Blackfin objdump
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-multiarch curl xz-utils build-essential
+          OBJDUMP="$(command -v objdump)"
+          if ! "$OBJDUMP" -i 2>/dev/null | grep -Eiq 'bfin|blackfin'; then
+            cd "$RUNNER_TEMP"
+            curl --fail --location --retry 4 --retry-all-errors -o binutils-2.44.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
+            tar -xf binutils-2.44.tar.xz
+            mkdir -p binutils-build && cd binutils-build
+            ../binutils-2.44/configure --target=bfin-elf --disable-nls --disable-werror --disable-gdb --disable-gas --disable-ld --disable-sim
+            make -j2 all-binutils
+            OBJDUMP="$PWD/binutils/objdump"
+          fi
+          "$OBJDUMP" -i | grep -Eiq 'bfin|blackfin'
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
+      - name: Download and decrypt canonical M Monochrom firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mmappend"
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmappend/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmappend/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          python3 tools/recover_leica_m9_mm_shared_key.py "$RUNNER_TEMP/mmappend/m9.upd" "$RUNNER_TEMP/mmappend/mm.upm" --mm-out "$RUNNER_TEMP/mmappend/mm.dec" --meta-out "$RUNNER_TEMP/mmappend/recovery_meta.json"
+      - name: Trace BF547 AppendSettings client path
+        run: |
+          set -euo pipefail
+          python3 tools/mm_bf547_appendsettings_client_trace.py "$RUNNER_TEMP/mmappend/mm.dec" --objdump "$OBJDUMP" --outdir "$RUNNER_TEMP/mmappend/derived"
+          cat "$RUNNER_TEMP/mmappend/derived/MM_BF547_APPENDSETTINGS_CLIENT_TRACE.txt"
+      - name: Publish derived evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-BF547-APPENDSETTINGS-CLIENTTRACE1A
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/mmappend/recovery_meta.json
+            ${{ runner.temp }}/mmappend/derived/MM_BF547_APPENDSETTINGS_CLIENT_TRACE.json
+            ${{ runner.temp }}/mmappend/derived/MM_BF547_APPENDSETTINGS_CLIENT_TRACE.txt
+      - name: Remove firmware material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/mmappend/m9.upd" "$RUNNER_TEMP/mmappend/mm.upm" "$RUNNER_TEMP/mmappend/mm.dec"
