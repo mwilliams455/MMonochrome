@@ -2,7 +2,7 @@
 """Close original M Monochrom sharpness modifier-code arithmetic.
 
 Evidence-only probe for the canonical decrypted M Monochrom 1.022 firmware.
-It reports derived integer metadata from PROCESS/LUTS and BF0 static data; no
+It reports derived integer metadata from PROCESS/LUTS and BF561 static data; no
 firmware binary payload is emitted.
 """
 from __future__ import annotations
@@ -33,21 +33,27 @@ def u32(b: bytes, off: int) -> int:
     return struct.unpack_from("<I", b, off)[0]
 
 
-def read_ldr_memory(blocks: list[dict], addr: int, size: int) -> bytes:
+def read_ldr_memory(named_blocks: list[tuple[str, list[dict]]], addr: int, size: int) -> tuple[str, bytes]:
     end = addr + size
-    for b in blocks:
-        lo = int(b["addr"])
-        hi = lo + len(b["payload"])
-        if lo <= addr and end <= hi:
-            rel = addr - lo
-            return b["payload"][rel:rel + size]
-    raise KeyError(f"LDR memory range not found: {addr:#x}..{end:#x}")
+    for source_name, blocks in named_blocks:
+        for b in blocks:
+            lo = int(b["addr"])
+            hi = lo + len(b["payload"])
+            if lo <= addr and end <= hi:
+                rel = addr - lo
+                return source_name, b["payload"][rel:rel + size]
+    ranges = []
+    for source_name, blocks in named_blocks:
+        near = sorted(
+            ((abs(int(b["addr"]) - addr), int(b["addr"]), len(b["payload"])) for b in blocks),
+            key=lambda x: x[0],
+        )[:4]
+        ranges.extend({"source": source_name, "addr": hex(lo), "size": sz, "distance": dist} for dist, lo, sz in near)
+    raise KeyError(json.dumps({"missing": [hex(addr), hex(end)], "nearest_blocks": ranges}, indent=2))
 
 
 def decode_descriptor(desc: int) -> dict:
     """Mirror LoadAndModifySharpnessDa's parity reductions exactly."""
-    # W[...] (X) sign-extends. Descriptors used by valid codes are expected positive,
-    # but preserve the signed input in the report.
     r2 = int(desc)
     r1 = 2
     if (r2 & 1) == 0:
@@ -86,8 +92,6 @@ def main() -> None:
     if len(luts) <= BANK_START:
         raise SystemExit("PROCESS/LUTS too small")
 
-    # Five 19-word rows fill exactly 0x410..0x58c. Set uses the first 16 words
-    # of each row for physical ISO slots 0..15; three words remain per row.
     matrix = []
     for selector in range(MATRIX_ROWS):
         off = MATRIX_START + selector * MATRIX_STRIDE_WORDS * 4
@@ -108,18 +112,27 @@ def main() -> None:
         raise SystemExit("outer BF561 missing")
     children = pwad.parse_pwad(bf.data)
     cmap = {x.name.lower(): x for x in children}
-    blocks = trace.parse_ldr(cmap["bf0"].data)
+    named_blocks: list[tuple[str, list[dict]]] = []
+    for name in ("bf0", "bf1"):
+        if name in cmap:
+            named_blocks.append((name, trace.parse_ldr(cmap[name].data)))
 
-    def extract_desc(base_addr: int) -> list[dict]:
-        raw = read_ldr_memory(blocks, base_addr, 2 * (MAX_CODE + 1))
+    def extract_desc(base_addr: int) -> dict:
+        source, raw = read_ldr_memory(named_blocks, base_addr, 2 * (MAX_CODE + 1))
         vals = struct.unpack("<" + "h" * (MAX_CODE + 1), raw)
-        return [{"code": i, **decode_descriptor(int(v))} for i, v in enumerate(vals)]
+        return {
+            "source_ldr": source,
+            "base": hex(base_addr),
+            "entries": [{"code": i, **decode_descriptor(int(v))} for i, v in enumerate(vals)],
+        }
 
     core_a = extract_desc(CORE_A_DESC_BASE)
     core_b = extract_desc(CORE_B_DESC_BASE)
+    core_a_vals = [x["descriptor"] for x in core_a["entries"]]
+    core_b_vals = [x["descriptor"] for x in core_b["entries"]]
 
     report = {
-        "schema": "mmonochrom.sharpness.modifierprobe1a.v1",
+        "schema": "mmonochrom.sharpness.modifierprobe1b.v1",
         "firmware_decrypted_sha256": trace.sha(fw),
         "classification": "firmware_derived_integer_modifier_semantics",
         "archive_matrix": {
@@ -134,11 +147,9 @@ def main() -> None:
             "selector_rows": matrix,
         },
         "descriptor_tables": {
-            "core_a_base": hex(CORE_A_DESC_BASE),
-            "core_b_base": hex(CORE_B_DESC_BASE),
             "core_a": core_a,
             "core_b": core_b,
-            "mirrored_values_identical": [x["descriptor"] for x in core_a] == [x["descriptor"] for x in core_b],
+            "mirrored_values_identical": core_a_vals == core_b_vals,
         },
         "closed_equation": {
             "loader_valid_codes": "1..12; <=0 or >12 returns before copy/modify",
@@ -155,13 +166,14 @@ def main() -> None:
         f.write("Archive modifier matrix 0x410..0x58c:\n")
         for row in matrix:
             f.write(f"selector {row['raw_selector']}: ISO codes {row['iso_codes']} extra {row['extra_words']}\n")
-        f.write("\nCore A descriptor decode:\n")
-        for x in core_a:
+        f.write(f"\nCore A descriptor source: {core_a['source_ldr']} {core_a['base']}\n")
+        for x in core_a["entries"]:
             f.write(
                 f"code {x['code']:2d}: desc={x['descriptor']:4d} mult={x['multiplier']:4d} "
                 f">>{x['right_shift']} scale={x['effective_scale_num']}/{x['effective_scale_den']}\n"
             )
-        f.write(f"\nCore mirror identical: {report['descriptor_tables']['mirrored_values_identical']}\n")
+        f.write(f"\nCore B descriptor source: {core_b['source_ldr']} {core_b['base']}\n")
+        f.write(f"Core mirror identical: {report['descriptor_tables']['mirrored_values_identical']}\n")
         f.write("\nExact loader sample equation:\n")
         f.write("y = clamp(((x * multiplier(code)) >> shift(code)), -2048, +2048)\n")
 
@@ -170,8 +182,10 @@ def main() -> None:
         "bank_start": hex(BANK_START),
         "matrix_meets_bank": MATRIX_END == BANK_START,
         "iso_count": iso_count,
+        "core_a_source": core_a["source_ldr"],
+        "core_b_source": core_b["source_ldr"],
         "core_mirror_identical": report["descriptor_tables"]["mirrored_values_identical"],
-        "core_a_descriptors": [x["descriptor"] for x in core_a],
+        "core_a_descriptors": core_a_vals,
         "selector_iso_codes": [x["iso_codes"] for x in matrix],
     }, indent=2))
 
