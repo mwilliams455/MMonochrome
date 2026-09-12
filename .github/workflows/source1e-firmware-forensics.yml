@@ -115,7 +115,9 @@ jobs:
           python tools/extract_source1e_targets.py \
             --mono-ldr "$W/extracted/mm_bf0" --mono-map "$W/extracted/mm_bf0.map" \
             --m9-ldr "$W/extracted/m9_bf0" --m9-map "$W/extracted/m9_bf0.map" \
+            --m9-active-prefix --allow-missing-m9 \
             --out-dir "$W/functions" --strict > "$W/evidence/function_anchors.json"
+          jq '{m9_active_map_end,m9_embedded_monochrom_records_excluded,missing_active_m9_targets}' "$W/evidence/function_anchors.json"
 
       - name: Disassemble cross-generation scalar and transfer routines
         shell: bash
@@ -143,6 +145,7 @@ jobs:
           set -euo pipefail
           W="$RUNNER_TEMP/source1e"
           E="$W/evidence"
+          A="$E/function_anchors.json"
           TARGETS='Process_Y L3L1_Put8BitY Process_Shading Process_Contrast InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start Run'
           for prefix in mm m9; do
             ARGS=()
@@ -150,7 +153,12 @@ jobs:
               f="$E/${prefix}_${name}.gnu.dis.txt"
               [ -f "$f" ] && ARGS+=(--disassembly "$f")
             done
-            python tools/resolve_bfin_calls.py --map "$W/extracted/${prefix}_bf0.map" "${ARGS[@]}" > "$E/${prefix}_direct_calls.json"
+            MAP_ARGS=(--map "$W/extracted/${prefix}_bf0.map")
+            if [ "$prefix" = m9 ]; then
+              M9_END=$(jq -r '.m9_active_map_end' "$A")
+              [ "$M9_END" != null ] && MAP_ARGS+=(--map-end "$M9_END")
+            fi
+            python tools/resolve_bfin_calls.py "${MAP_ARGS[@]}" "${ARGS[@]}" > "$E/${prefix}_direct_calls.json"
           done
 
       - name: Derive cross-generation Run and scalar summary
@@ -159,7 +167,7 @@ jobs:
           set -euo pipefail
           W="$RUNNER_TEMP/source1e"
           PYTHONPATH=tools python - <<'PY'
-          import json, os, re
+          import json, os
           from pathlib import Path
           root = Path(os.environ['RUNNER_TEMP']) / 'source1e'
           evidence = root / 'evidence'
@@ -169,19 +177,22 @@ jobs:
           m9_calls = json.loads((evidence / 'm9_direct_calls.json').read_text())
           names = ['Process_Y','L3L1_Put8BitY','Process_Shading','Process_Contrast','InitL1MemoryProcessing','DMACopyWindow','L3L1_Get','L3L1_Put16Bit','L3L1_Put8Bit','IP_Start','Run']
           summary = {
-              'schema': 'mmonochrom.source1e.cross_generation_run.v2',
+              'schema': 'mmonochrom.source1e.cross_generation_run.v3',
               'topology_strict_checks_passed': topology.get('strict_checks_passed'),
+              'm9_active_map_end': anchors.get('m9_active_map_end'),
+              'm9_embedded_monochrom_records_excluded': anchors.get('m9_embedded_monochrom_records_excluded'),
+              'missing_active_m9_targets': anchors.get('missing_active_m9_targets', []),
               'functions': {},
               'run_calls': {},
           }
           for name in names:
               item = anchors['targets'].get(name, {})
               summary['functions'][name] = {
-                  'monochrom': item.get('monochrom'), 'm9': item.get('m9'),
+                  'monochrom': item.get('monochrom'), 'm9_active': item.get('m9'),
                   'same_address': item.get('same_address'), 'same_size': item.get('same_size'),
-                  'byte_identical': item.get('byte_identical'),
+                  'byte_identical': item.get('byte_identical'), 'm9_error': item.get('m9_error'),
               }
-          for prefix, calls in (('monochrom', mm_calls), ('m9', m9_calls)):
+          for prefix, calls in (('monochrom', mm_calls), ('m9_active', m9_calls)):
               key = 'mm_Run.gnu.dis.txt' if prefix == 'monochrom' else 'm9_Run.gnu.dis.txt'
               rows = calls.get('files', {}).get(key, {}).get('calls', [])
               summary['run_calls'][prefix] = [
