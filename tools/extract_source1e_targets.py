@@ -7,9 +7,14 @@ Purpose:
   are supplied;
 - optionally write local raw function slices for a narrow strict decoder.
 
+The canonical M9 bf0.map contains the complete Monochrom bf0.map as an embedded
+suffix.  With ``--m9-active-prefix`` this tool finds that exact byte boundary
+and excludes the embedded Monochrom records from M9 function selection.  This
+prevents archival Monochrom map records from being misidentified as active M9
+routines.
+
 This tool intentionally does not disassemble and does not infer pipeline order.
-It should be run only after trace_scalar_topology.py reproduces the canonical
-bf0 map provenance.  No Leica firmware bytes are stored in this repository.
+No Leica firmware bytes are stored in this repository.
 """
 from __future__ import annotations
 
@@ -22,28 +27,13 @@ from typing import Dict, List, Tuple
 
 
 DEFAULT_TARGETS = [
-    "Process_Y",
-    "L3L1_Put8BitY",
-    "Process_Shading",
-    "Process_Contrast",
-    "Process_Noise",
-    "Process_Sharpness",
-    "Process_Blinker",
-    "CalculateNoiseParameter",
-    "LoadISODataL1",
-    "LoadLutArchiveL3",
-    "InitL1MemoryProcessing",
-    "DMACopyWindow",
-    "L3L1_Get",
-    "L3L1_Put16Bit",
-    "L3L1_Put8Bit",
-    "IP_Start",
-    "IP_FinishLines",
-    "IP_Finished",
-    "LoadBlemishL1",
-    "CorrectionBlemishes",
-    "CorrectionDualOutput",
-    "Run",
+    "Process_Y", "L3L1_Put8BitY", "Process_Shading", "Process_Contrast",
+    "Process_Noise", "Process_Sharpness", "Process_Blinker",
+    "CalculateNoiseParameter", "LoadISODataL1", "LoadLutArchiveL3",
+    "InitL1MemoryProcessing", "DMACopyWindow", "L3L1_Get",
+    "L3L1_Put16Bit", "L3L1_Put8Bit", "IP_Start", "IP_FinishLines",
+    "IP_Finished", "LoadBlemishL1", "CorrectionBlemishes",
+    "CorrectionDualOutput", "Run",
 ]
 
 
@@ -51,10 +41,9 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def map_records(path: Path) -> List[dict]:
-    data = path.read_bytes()
+def map_records_bytes(data: bytes, label: str) -> List[dict]:
     if len(data) % 32:
-        raise ValueError(f"{path}: map size {len(data)} is not a multiple of 32")
+        raise ValueError(f"{label}: map size {len(data)} is not a multiple of 32")
     out = []
     for off in range(0, len(data), 32):
         rec = data[off : off + 32]
@@ -63,6 +52,10 @@ def map_records(path: Path) -> List[dict]:
         if name:
             out.append({"name": name, "addr": addr, "size": size, "map_off": off})
     return out
+
+
+def map_records(path: Path) -> List[dict]:
+    return map_records_bytes(path.read_bytes(), str(path))
 
 
 def ldr_blocks(path: Path) -> List[dict]:
@@ -77,9 +70,7 @@ def ldr_blocks(path: Path) -> List[dict]:
         else:
             end = off + count
             if end > len(data):
-                raise RuntimeError(
-                    f"{path}: LDR block at 0x{addr:08x} count={count} overruns file"
-                )
+                raise RuntimeError(f"{path}: LDR block at 0x{addr:08x} count={count} overruns file")
             payload = data[off:end]
             off = end
         out.append({"addr": addr, "data": payload, "flags": flags})
@@ -104,8 +95,7 @@ def read_overlay(blocks: List[dict], addr: int, size: int) -> bytes:
     if not all(hit):
         first_missing = next(i for i, value in enumerate(hit) if not value)
         raise RuntimeError(
-            f"overlay bytes missing at 0x{addr + first_missing:08x} while reading "
-            f"0x{addr:08x}+{size}"
+            f"overlay bytes missing at 0x{addr + first_missing:08x} while reading 0x{addr:08x}+{size}"
         )
     return bytes(out)
 
@@ -121,7 +111,6 @@ def choose_record(index: Dict[str, List[dict]], name: str) -> dict:
     matches = index.get(name, [])
     if not matches:
         raise KeyError(f"symbol not found: {name}")
-    # Preserve established project convention: use the first map instance.
     return matches[0]
 
 
@@ -133,38 +122,51 @@ def extract_one(index: Dict[str, List[dict]], blocks: List[dict], name: str) -> 
 
 def brief(rec: dict, code: bytes) -> dict:
     return {
-        "address": f"0x{rec['addr']:08x}",
-        "size": rec["size"],
-        "map_offset": f"0x{rec['map_off']:x}",
-        "sha256": sha256(code),
-        "first16": code[:16].hex(),
-        "last16": code[-16:].hex() if code else "",
+        "address": f"0x{rec['addr']:08x}", "size": rec["size"],
+        "map_offset": f"0x{rec['map_off']:x}", "sha256": sha256(code),
+        "first16": code[:16].hex(), "last16": code[-16:].hex() if code else "",
     }
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mono-ldr", required=True, type=Path, help="Monochrom BF561/bf0 binary LDR")
-    ap.add_argument("--mono-map", required=True, type=Path, help="matching Monochrom BF561/bf0.map")
-    ap.add_argument("--m9-ldr", type=Path, help="optional M9 BF561/bf0 binary LDR")
-    ap.add_argument("--m9-map", type=Path, help="optional matching M9 BF561/bf0.map")
-    ap.add_argument("--target", action="append", dest="targets", help="target symbol; repeatable")
-    ap.add_argument("--out-dir", type=Path, help="optional local directory for raw function slices")
+    ap.add_argument("--mono-ldr", required=True, type=Path)
+    ap.add_argument("--mono-map", required=True, type=Path)
+    ap.add_argument("--m9-ldr", type=Path)
+    ap.add_argument("--m9-map", type=Path)
+    ap.add_argument("--m9-active-prefix", action="store_true",
+                    help="restrict M9 records to bytes before the exact embedded Monochrom map")
+    ap.add_argument("--allow-missing-m9", action="store_true",
+                    help="record active-M9 missing symbols without failing --strict")
+    ap.add_argument("--target", action="append", dest="targets")
+    ap.add_argument("--out-dir", type=Path)
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args()
 
     if bool(args.m9_ldr) != bool(args.m9_map):
         raise ValueError("provide both --m9-ldr and --m9-map, or neither")
+    if args.m9_active_prefix and not args.m9_map:
+        raise ValueError("--m9-active-prefix requires --m9-map")
 
     targets = args.targets or DEFAULT_TARGETS
-    mono_rows = map_records(args.mono_map)
+    mono_map_bytes = args.mono_map.read_bytes()
+    mono_rows = map_records_bytes(mono_map_bytes, str(args.mono_map))
     mono_index = index_by_name(mono_rows)
     mono_blocks = ldr_blocks(args.mono_ldr)
 
     m9_index = None
     m9_blocks = None
+    m9_active_end = None
     if args.m9_ldr:
-        m9_rows = map_records(args.m9_map)
+        m9_map_bytes = args.m9_map.read_bytes()
+        m9_rows = map_records_bytes(m9_map_bytes, str(args.m9_map))
+        if args.m9_active_prefix:
+            m9_active_end = m9_map_bytes.find(mono_map_bytes)
+            if m9_active_end < 0:
+                raise RuntimeError("exact Monochrom map is not embedded in supplied M9 map")
+            if m9_active_end % 32:
+                raise RuntimeError(f"embedded Monochrom map begins off record boundary: 0x{m9_active_end:x}")
+            m9_rows = [row for row in m9_rows if row["map_off"] < m9_active_end]
         m9_index = index_by_name(m9_rows)
         m9_blocks = ldr_blocks(args.m9_ldr)
 
@@ -172,16 +174,22 @@ def main() -> None:
         args.out_dir.mkdir(parents=True, exist_ok=True)
 
     result = {
-        "schema": "mmonochrom.source1e.function_anchors.v2",
+        "schema": "mmonochrom.source1e.function_anchors.v3",
         "scope": "exact_function_slices_before_instruction_decode",
         "mono_ldr_sha256": sha256(args.mono_ldr.read_bytes()),
-        "mono_map_sha256": sha256(args.mono_map.read_bytes()),
+        "mono_map_sha256": sha256(mono_map_bytes),
         "m9_ldr_sha256": sha256(args.m9_ldr.read_bytes()) if args.m9_ldr else None,
         "m9_map_sha256": sha256(args.m9_map.read_bytes()) if args.m9_map else None,
+        "m9_active_prefix_enabled": bool(args.m9_active_prefix),
+        "m9_active_map_end": f"0x{m9_active_end:x}" if m9_active_end is not None else None,
+        "m9_embedded_monochrom_records_excluded": (
+            len(mono_map_bytes) // 32 if m9_active_end is not None else 0
+        ),
         "targets": {},
     }
 
     problems: List[str] = []
+    missing_m9: List[str] = []
     for name in targets:
         item = {"name": name}
         try:
@@ -204,22 +212,26 @@ def main() -> None:
                 item["byte_identical"] = mono_code == m9_code
                 if args.out_dir:
                     (args.out_dir / f"m9_{name}.bin").write_bytes(m9_code)
-            except (KeyError, RuntimeError) as exc:
+            except KeyError as exc:
                 item["m9_error"] = str(exc)
-                # M9 comparison is useful but only fatal in strict mode.
+                missing_m9.append(name)
+                if not args.allow_missing_m9:
+                    problems.append(f"M9 {name}: {exc}")
+            except RuntimeError as exc:
+                item["m9_error"] = str(exc)
                 problems.append(f"M9 {name}: {exc}")
 
         result["targets"][name] = item
 
+    result["missing_active_m9_targets"] = missing_m9
     result["problems"] = problems
     result["strict_checks_passed"] = not problems
     result["next_step"] = (
-        "Use the recovered Run transfer/processing helper anchors to trace the 16-bit scalar "
-        "buffer backwards from Process_Shading/Process_Contrast; do not infer sensor semantics "
-        "from symbol names alone."
+        "Trace the active Monochrom Run transfer path backwards from the 16-bit shading/contrast "
+        "buffer. Treat M9 records in the embedded Monochrom suffix as archival provenance, not "
+        "active M9 code targets."
     )
     print(json.dumps(result, indent=2))
-
     if args.strict and problems:
         raise SystemExit(2)
 
