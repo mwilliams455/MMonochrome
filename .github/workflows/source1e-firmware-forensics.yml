@@ -11,6 +11,7 @@ on:
       - 'tools/pwad.py'
       - 'tools/trace_scalar_topology.py'
       - 'tools/extract_source1e_targets.py'
+      - 'tools/resolve_bfin_calls.py'
 
 permissions:
   contents: read
@@ -57,12 +58,8 @@ jobs:
           set -euo pipefail
           W="$RUNNER_TEMP/source1e"
           mkdir -p "$W/evidence" "$W/extracted" "$W/functions"
-          curl --fail --location --retry 4 --retry-all-errors \
-            -o "$W/m9.upd" \
-            'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
-          curl --fail --location --retry 4 --retry-all-errors \
-            -o "$W/mm.upm" \
-            'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
           echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$W/m9.upd" | sha256sum -c --strict
           echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$W/mm.upm" | sha256sum -c --strict
 
@@ -71,14 +68,10 @@ jobs:
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/source1e"
-          python tools/recover_m9_mm_shared_key.py \
-            "$W/m9.upd" "$W/mm.upm" \
-            --m9-out "$W/m9.dec" \
-            --mm-out "$W/mm.dec" \
-            --meta-out "$W/evidence/recovery_meta.json"
+          python tools/recover_m9_mm_shared_key.py "$W/m9.upd" "$W/mm.upm" \
+            --m9-out "$W/m9.dec" --mm-out "$W/mm.dec" --meta-out "$W/evidence/recovery_meta.json"
           echo '4f962bb7799ad9a6745ab36c2a3ba59757bfcbd205f50472ddf1b904a5756d20  '"$W/m9.dec" | sha256sum -c --strict
           echo 'c9e14ee475408802c83774f37b19c85c57663d9840e8e4c2cfe80e14dec9a7ae  '"$W/mm.dec" | sha256sum -c --strict
-          cat "$W/evidence/recovery_meta.json"
 
       - name: Extract BF561 bf0/bf1 LDR and maps locally
         shell: bash
@@ -89,7 +82,6 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           from pwad import get_lump
-
           root = Path(os.environ['RUNNER_TEMP']) / 'source1e'
           out = root / 'extracted'
           evidence = root / 'evidence'
@@ -100,10 +92,7 @@ jobs:
                   data = get_lump(firmware, ['BF561', name]).data
                   path = out / f'{camera}_{name}'
                   path.write_bytes(data)
-                  report['files'][f'{camera}_{name}'] = {
-                      'size': len(data),
-                      'sha256': hashlib.sha256(data).hexdigest(),
-                  }
+                  report['files'][f'{camera}_{name}'] = {'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
           (evidence / 'bf561_extract_manifest.json').write_text(json.dumps(report, indent=2) + '\n')
           print(json.dumps(report, indent=2))
           PY
@@ -114,13 +103,9 @@ jobs:
           set -euo pipefail
           W="$RUNNER_TEMP/source1e"
           python tools/trace_scalar_topology.py \
-            --mono-map "$W/extracted/mm_bf0.map" \
-            --m9-map "$W/extracted/m9_bf0.map" \
-            --mono-bf1-map "$W/extracted/mm_bf1.map" \
-            --m9-bf1-map "$W/extracted/m9_bf1.map" \
-            --strict \
-            > "$W/evidence/scalar_topology.json"
-          cat "$W/evidence/scalar_topology.json"
+            --mono-map "$W/extracted/mm_bf0.map" --m9-map "$W/extracted/m9_bf0.map" \
+            --mono-bf1-map "$W/extracted/mm_bf1.map" --m9-bf1-map "$W/extracted/m9_bf1.map" \
+            --strict > "$W/evidence/scalar_topology.json"
 
       - name: Anchor exact SOURCE1E function bytes
         shell: bash
@@ -128,23 +113,19 @@ jobs:
           set -euo pipefail
           W="$RUNNER_TEMP/source1e"
           python tools/extract_source1e_targets.py \
-            --mono-ldr "$W/extracted/mm_bf0" \
-            --mono-map "$W/extracted/mm_bf0.map" \
-            --m9-ldr "$W/extracted/m9_bf0" \
-            --m9-map "$W/extracted/m9_bf0.map" \
-            --out-dir "$W/functions" \
-            --strict \
-            > "$W/evidence/function_anchors.json"
-          cat "$W/evidence/function_anchors.json"
+            --mono-ldr "$W/extracted/mm_bf0" --mono-map "$W/extracted/mm_bf0.map" \
+            --m9-ldr "$W/extracted/m9_bf0" --m9-map "$W/extracted/m9_bf0.map" \
+            --out-dir "$W/functions" --strict > "$W/evidence/function_anchors.json"
 
-      - name: Disassemble pinned scalar-path routines
+      - name: Disassemble cross-generation scalar and transfer routines
         shell: bash
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/source1e"
           E="$W/evidence"
           A="$E/function_anchors.json"
-          for name in Process_Y L3L1_Put8BitY Process_Shading Process_Contrast; do
+          TARGETS='Process_Y L3L1_Put8BitY Process_Shading Process_Contrast InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start Run'
+          for name in $TARGETS; do
             for camera in monochrom m9; do
               prefix=mm
               [ "$camera" = m9 ] && prefix=m9
@@ -152,14 +133,27 @@ jobs:
               [ -f "$file" ] || continue
               base=$(jq -r --arg n "$name" --arg c "$camera" '.targets[$n][$c].address // empty' "$A")
               [ -n "$base" ] || { echo "missing base for $camera $name" >&2; exit 1; }
-              out="$E/${prefix}_${name}.gnu.dis.txt"
-              "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$file" > "$out"
-              echo "===== $camera $name @ $base ====="
-              cat "$out"
+              "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$file" > "$E/${prefix}_${name}.gnu.dis.txt"
             done
           done
 
-      - name: Derive cross-generation scalar-path summary
+      - name: Resolve direct calls for both generations
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e"
+          E="$W/evidence"
+          TARGETS='Process_Y L3L1_Put8BitY Process_Shading Process_Contrast InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start Run'
+          for prefix in mm m9; do
+            ARGS=()
+            for name in $TARGETS; do
+              f="$E/${prefix}_${name}.gnu.dis.txt"
+              [ -f "$f" ] && ARGS+=(--disassembly "$f")
+            done
+            python tools/resolve_bfin_calls.py --map "$W/extracted/${prefix}_bf0.map" "${ARGS[@]}" > "$E/${prefix}_direct_calls.json"
+          done
+
+      - name: Derive cross-generation Run and scalar summary
         shell: bash
         run: |
           set -euo pipefail
@@ -167,37 +161,37 @@ jobs:
           PYTHONPATH=tools python - <<'PY'
           import json, os, re
           from pathlib import Path
-
           root = Path(os.environ['RUNNER_TEMP']) / 'source1e'
           evidence = root / 'evidence'
           anchors = json.loads((evidence / 'function_anchors.json').read_text())
           topology = json.loads((evidence / 'scalar_topology.json').read_text())
-
-          names = ['Process_Y', 'L3L1_Put8BitY', 'Process_Shading', 'Process_Contrast']
+          mm_calls = json.loads((evidence / 'mm_direct_calls.json').read_text())
+          m9_calls = json.loads((evidence / 'm9_direct_calls.json').read_text())
+          names = ['Process_Y','L3L1_Put8BitY','Process_Shading','Process_Contrast','InitL1MemoryProcessing','DMACopyWindow','L3L1_Get','L3L1_Put16Bit','L3L1_Put8Bit','IP_Start','Run']
           summary = {
-              'schema': 'mmonochrom.source1e.scalar_path_summary.v1',
+              'schema': 'mmonochrom.source1e.cross_generation_run.v2',
               'topology_strict_checks_passed': topology.get('strict_checks_passed'),
-              'legacy_inventory_fingerprint': topology.get('legacy_inventory_provenance_fingerprint'),
               'functions': {},
+              'run_calls': {},
           }
-          call_re = re.compile(r'\bcall\b', re.I)
           for name in names:
               item = anchors['targets'].get(name, {})
-              entry = {
-                  'monochrom': item.get('monochrom'),
-                  'm9': item.get('m9'),
-                  'same_address': item.get('same_address'),
-                  'same_size': item.get('same_size'),
+              summary['functions'][name] = {
+                  'monochrom': item.get('monochrom'), 'm9': item.get('m9'),
+                  'same_address': item.get('same_address'), 'same_size': item.get('same_size'),
                   'byte_identical': item.get('byte_identical'),
               }
-              for prefix in ('mm', 'm9'):
-                  p = evidence / f'{prefix}_{name}.gnu.dis.txt'
-                  if p.exists():
-                      text = p.read_text(errors='replace')
-                      entry[f'{prefix}_disassembly_line_count'] = len(text.splitlines())
-                      entry[f'{prefix}_call_line_count'] = sum(bool(call_re.search(line)) for line in text.splitlines())
-              summary['functions'][name] = entry
-          (evidence / 'scalar_path_summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          for prefix, calls in (('monochrom', mm_calls), ('m9', m9_calls)):
+              key = 'mm_Run.gnu.dis.txt' if prefix == 'monochrom' else 'm9_Run.gnu.dis.txt'
+              rows = calls.get('files', {}).get(key, {}).get('calls', [])
+              summary['run_calls'][prefix] = [
+                  {
+                      'site': row['site'], 'target': row['target'],
+                      'names': [r['name'] for r in row.get('exact_map_records', [])],
+                  }
+                  for row in rows
+              ]
+          (evidence / 'cross_generation_run_summary.json').write_text(json.dumps(summary, indent=2) + '\n')
           print(json.dumps(summary, indent=2))
           PY
 
@@ -217,11 +211,6 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -rf \
-            "$RUNNER_TEMP/source1e/m9.upd" \
-            "$RUNNER_TEMP/source1e/mm.upm" \
-            "$RUNNER_TEMP/source1e/m9.dec" \
-            "$RUNNER_TEMP/source1e/mm.dec" \
-            "$RUNNER_TEMP/source1e/extracted" \
-            "$RUNNER_TEMP/source1e/functions" \
-            "$RUNNER_TEMP"/*.bin
+          rm -rf "$RUNNER_TEMP/source1e/m9.upd" "$RUNNER_TEMP/source1e/mm.upm" \
+            "$RUNNER_TEMP/source1e/m9.dec" "$RUNNER_TEMP/source1e/mm.dec" \
+            "$RUNNER_TEMP/source1e/extracted" "$RUNNER_TEMP/source1e/functions" "$RUNNER_TEMP"/*.bin
