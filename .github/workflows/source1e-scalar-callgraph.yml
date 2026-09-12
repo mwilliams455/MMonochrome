@@ -11,6 +11,7 @@ on:
       - 'tools/pwad.py'
       - 'tools/extract_source1e_targets.py'
       - 'tools/resolve_bfin_calls.py'
+      - 'tools/verify_source1e_scalar_semantics.py'
 
 permissions:
   contents: read
@@ -97,6 +98,20 @@ jobs:
             [ -f "$file" ] && [ -n "$base" ] || { echo "missing $name function anchor" >&2; exit 1; }
             "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$file" > "$E/mm_${name}.gnu.dis.txt"
           done
+
+      - name: Verify pinned Process_Y and Contrast semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          E="$W/evidence"
+          python tools/verify_source1e_scalar_semantics.py \
+            --process-y-bin "$W/functions/mm_Process_Y.bin" \
+            --process-y-dis "$E/mm_Process_Y.gnu.dis.txt" \
+            --contrast-bin "$W/functions/mm_Process_Contrast.bin" \
+            --contrast-dis "$E/mm_Process_Contrast.gnu.dis.txt" \
+            --strict > "$E/scalar_semantics.json"
+          cat "$E/scalar_semantics.json"
 
       - name: Resolve direct calls to bf0 fixed records
         shell: bash
