@@ -3,7 +3,7 @@
 
 The purpose is deliberately narrow: prove the order in which ``Run`` tests the
 processing-enable bits and returns from each corresponding processing branch to
-the next test.  This is stronger than symbol-order inference but still does not
+the next test. This is stronger than symbol-order inference but still does not
 claim that every branch is enabled for every capture or that a named function
 fully describes its input producer.
 """
@@ -20,60 +20,12 @@ RUN_ADDR = 0xFFA01790
 RUN_SIZE = 2444
 
 EXPECTED = [
-    {
-        "bit": 1,
-        "test": "0xffa01b2c",
-        "branch": "0xffa01dfc",
-        "call_site": "0xffa01e34",
-        "call_target": "0xffa02718",
-        "name": "Process_Shading",
-        "resume": "0xffa01b38",
-    },
-    {
-        "bit": 2,
-        "test": "0xffa01b38",
-        "branch": "0xffa01d98",
-        "call_site": "0xffa01db4",
-        "call_target": "0xffa007c0",
-        "name": "Process_Blinker",
-        "resume": "0xffa01b3c",
-    },
-    {
-        "bit": 6,
-        "test": "0xffa01b44",
-        "branch": "0xffa01d22",
-        "call_site": "0xffa01d46",
-        "call_target": "0xffa015d8",
-        "name": "Process_Noise",
-        "resume": "0xffa01b4a",
-    },
-    {
-        "bit": 7,
-        "test": "0xffa01b4a",
-        "branch": "0xffa01cb4",
-        "call_site": "0xffa01cd4",
-        "call_target": "0xffa0287c",
-        "name": "Process_Sharpness",
-        "resume": "0xffa01b4e",
-    },
-    {
-        "bit": 8,
-        "test": "0xffa01b4e",
-        "branch": "0xffa01c8e",
-        "call_site": "0xffa01cae",
-        "call_target": "0xffa00b30",
-        "name": "Process_Contrast",
-        "resume": "0xffa01b52",
-    },
-    {
-        "bit": 9,
-        "test": "0xffa01b52",
-        "branch": "0xffa01c2a",
-        "call_site": "0xffa01c44",
-        "call_target": "0xffa028e8",
-        "name": "Process_Y",
-        "resume": "0xffa01b56",
-    },
+    {"bit": 1, "test": "0xffa01b2c", "branch": "0xffa01dfc", "call_site": "0xffa01e34", "call_target": "0xffa02718", "name": "Process_Shading", "resume": "0xffa01b38"},
+    {"bit": 2, "test": "0xffa01b38", "branch": "0xffa01d98", "call_site": "0xffa01db4", "call_target": "0xffa007c0", "name": "Process_Blinker", "resume": "0xffa01b3c"},
+    {"bit": 6, "test": "0xffa01b44", "branch": "0xffa01d22", "call_site": "0xffa01d46", "call_target": "0xffa015d8", "name": "Process_Noise", "resume": "0xffa01b4a"},
+    {"bit": 7, "test": "0xffa01b4a", "branch": "0xffa01cb4", "call_site": "0xffa01cd4", "call_target": "0xffa0287c", "name": "Process_Sharpness", "resume": "0xffa01b4e"},
+    {"bit": 8, "test": "0xffa01b4e", "branch": "0xffa01c8e", "call_site": "0xffa01cae", "call_target": "0xffa00b30", "name": "Process_Contrast", "resume": "0xffa01b52"},
+    {"bit": 9, "test": "0xffa01b52", "branch": "0xffa01c2a", "call_site": "0xffa01c44", "call_target": "0xffa028e8", "name": "Process_Y", "resume": "0xffa01b56"},
 ]
 
 
@@ -123,20 +75,21 @@ def main() -> None:
     recovered = []
     for item in EXPECTED:
         require_at(lines, item["test"], [f"bittst (r5, 0x{item['bit']:x})"], problems)
-        # The conditional jump immediately after each BITTST selects its process branch.
+        # Blackfin can do useful work between the CC-producing BITTST and the
+        # conditional branch. Search a bounded instruction window rather than
+        # assuming the jump is the next encoded instruction.
         test_addr = address(item["test"])
-        next_lines = [lines.get(test_addr + delta, "") for delta in (2, 4, 6)]
-        if not any(item["branch"].lower() in line and "jump" in line for line in next_lines):
-            problems.append(f"{item['test']}: branch to {item['branch']} not found immediately after bit test")
-        require_at(
-            lines,
-            item["call_site"],
-            ["call", item["call_target"]],
-            problems,
-        )
+        branch_found = False
+        for addr in sorted(a for a in lines if test_addr < a <= test_addr + 0x10):
+            line = lines[addr]
+            if item["branch"].lower() in line and "jump" in line:
+                branch_found = True
+                break
+        if not branch_found:
+            problems.append(f"{item['test']}: branch to {item['branch']} not found within dispatch window")
 
-        # Search a short post-call window for the explicit return to the next
-        # dispatch test or its immediate prelude.
+        require_at(lines, item["call_site"], ["call", item["call_target"]], problems)
+
         call_addr = address(item["call_site"])
         resume_found = False
         for addr in sorted(a for a in lines if call_addr < a <= call_addr + 0x100):
@@ -145,28 +98,18 @@ def main() -> None:
                 resume_found = True
                 break
         if not resume_found:
-            problems.append(
-                f"{item['name']}: no explicit post-call jump to next dispatch point {item['resume']}"
-            )
+            problems.append(f"{item['name']}: no explicit post-call jump to next dispatch point {item['resume']}")
 
-        recovered.append(
-            {
-                "bit": item["bit"],
-                "test_address": item["test"],
-                "branch_address": item["branch"],
-                "call_site": item["call_site"],
-                "call_target": item["call_target"],
-                "function": item["name"],
-                "resume_address": item["resume"],
-            }
-        )
+        recovered.append({
+            "bit": item["bit"], "test_address": item["test"], "branch_address": item["branch"],
+            "call_site": item["call_site"], "call_target": item["call_target"],
+            "function": item["name"], "resume_address": item["resume"],
+        })
 
     out = {
-        "schema": "mmonochrom.source1e.run_dispatch.v1",
+        "schema": "mmonochrom.source1e.run_dispatch.v2",
         "scope": "hash_bound_Run_direct_control_flow_not_universal_capture_enablement",
-        "run_address": f"0x{RUN_ADDR:08x}",
-        "run_size": len(data),
-        "run_sha256": sha256(args.run_bin),
+        "run_address": f"0x{RUN_ADDR:08x}", "run_size": len(data), "run_sha256": sha256(args.run_bin),
         "dispatch": recovered,
         "recovered_enabled_stage_order": [x["function"] for x in recovered],
         "scalar_domain_implication": (
@@ -175,8 +118,7 @@ def main() -> None:
             "hash-bound function semantics, this places the 16-bit shading path upstream of the "
             "16-bit-to-8-bit contrast transition and the 8-bit Y block-packing path downstream."
         ),
-        "problems": problems,
-        "verified": not problems,
+        "problems": problems, "verified": not problems,
     }
     print(json.dumps(out, indent=2))
     if args.strict and problems:
