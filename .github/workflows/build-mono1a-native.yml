@@ -1,10 +1,10 @@
-name: Build MMonochrome SOURCE1D XYZY1A
+name: Build MMonochrome RAWSCALAR1A
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - apk/mono1a-source1d
+      - apk/mono1a-rawscalar1a
     paths:
       - 'apk/mono1a/**'
       - '.github/workflows/build-mono1a-native.yml'
@@ -34,10 +34,12 @@ jobs:
           test "$(git -C m9base rev-parse HEAD)" = "fb1db92ef78df70442b9fee879795e584f2170cf"
           python3 -m py_compile apk/mono1a/apply-mono1a.py
           python3 -m py_compile apk/mono1a/apply-source1d.py
+          python3 -m py_compile apk/mono1a/apply-rawscalar1a.py
           echo "M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf" | tee MONO1A_UPSTREAM.txt
           echo "M9_SUCCESSFUL_REFERENCE_RUN=34610280688" | tee -a MONO1A_UPSTREAM.txt
           echo "MM_CURVE02_SHA256=7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752" | tee -a MONO1A_UPSTREAM.txt
-          echo "SOURCE_REVISION=MONO1A_SOURCE1D_XYZY1A" | tee -a MONO1A_UPSTREAM.txt
+          echo "SOURCE_REVISION=MONO1A_RAWSCALAR1A" | tee -a MONO1A_UPSTREAM.txt
+          echo "SOURCE1E_CLOSURE_HEAD=6eae8951975a6e0733db0fa39dc1fdcfb39539bc" | tee -a MONO1A_UPSTREAM.txt
 
       - name: Verify frozen M9 patch syntax
         working-directory: m9base
@@ -96,15 +98,16 @@ jobs:
           python3 patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
           python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
 
-      - name: Apply MONO1A and SOURCE1D overlays
+      - name: Apply MONO1A SOURCE1D and RAWSCALAR1A overlays
         shell: bash
         run: |
           set -euxo pipefail
           ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
           python3 apk/mono1a/apply-mono1a.py "$ROOT"
           python3 apk/mono1a/apply-source1d.py "$ROOT"
+          python3 apk/mono1a/apply-rawscalar1a.py "$ROOT"
 
-      - name: Verify MONO1A photographic scope and SOURCE1D isolation
+      - name: Verify RAWSCALAR1A isolation and frozen tone stage
         shell: bash
         run: |
           set -euo pipefail
@@ -114,36 +117,33 @@ jobs:
           C="$ROOT/app/src/main/cpp/m9color_jni.cpp"
           G="$ROOT/app/build.gradle"
           grep -n 'MONO1A_ENABLED = true' "$R"
-          grep -n 'renderMonochrome1ADirectBitmap' "$R" "$N" "$C"
           grep -n 'firmware_curve02_normalISO_sRGB_Standard' "$R"
           grep -n 'curve02Sha256.*7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752' "$R"
-          grep -n 'm9ColorPipelineApplied.*false' "$R"
-          grep -n 'tc20Applied.*false' "$R"
-          grep -n 'hsmApplied.*false' "$R"
-          grep -n 'sat3Applied.*false' "$R"
-          grep -n 'hdrApplied.*false' "$R"
+          grep -n 'RAWSCALAR1A' "$R" "$C"
+          grep -n 'normalized_linear_Bayer_after_physical_Camera2_LensShadingMap_before_MHC_RGB' "$R"
+          grep -n 'MHC_5x5_kernel_on_neutral_normalized_CFA' "$R"
+          grep -n 'equal_mean_of_reconstructed_neutral_axis_R_G_B' "$R"
+          grep -n 'm9LumaCoefficientsApplied.*false' "$R"
+          grep -n 'xyzCoefficientsApplied.*false' "$R"
+          grep -n 'leicaSpectralTruth.*false' "$R"
+          grep -n '_MONO_RAWSCALAR1A.jpg' "$R"
+          grep -n 'renderMonochrome1ARawScalarDirectBitmap' "$R" "$N" "$C"
           grep -n 'MM_MONO1A_CURVE02\[2048\]' "$C"
-          grep -n '4899ull \* r + 9617ull \* g + 1868ull \* b' "$C"
-          grep -n 'MONO1A_SOURCE1D_XYZY1A' "$R"
-          grep -n 'NATIVE_DNG_SENSOR_TO_XYZ_D50_Y_ROW' "$R"
-          grep -n 'counterfactual_scene_luminance_bridge_not_Leica_spectral_truth' "$R"
-          grep -n '_MONO_XYZY.jpg' "$R"
-          grep -n 'renderMonochrome1AWeightedDirectBitmap' "$R" "$N" "$C"
           grep -n 'applicationId.*com.m9project.mmonochrome.photon' "$G"
           ! grep -q 'applicationId.*com.m9project.m9cam.photon' "$G"
 
-      - name: Snapshot SOURCE1D assembled source
+      - name: Snapshot RAWSCALAR1A assembled source
         shell: bash
         run: |
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
-          mkdir -p source1d-assembled-source
-          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" source1d-assembled-source/
-          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java" source1d-assembled-source/
-          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" source1d-assembled-source/
-          cp "$ROOT/app/build.gradle" source1d-assembled-source/app-build.gradle
-          cp MONO1A_UPSTREAM.txt source1d-assembled-source/
-          sha256sum source1d-assembled-source/* | tee source1d-assembled-source/SHA256SUMS.txt
+          mkdir -p rawscalar1a-assembled-source
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" rawscalar1a-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java" rawscalar1a-assembled-source/
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" rawscalar1a-assembled-source/
+          cp "$ROOT/app/build.gradle" rawscalar1a-assembled-source/app-build.gradle
+          cp MONO1A_UPSTREAM.txt rawscalar1a-assembled-source/
+          sha256sum rawscalar1a-assembled-source/* | tee rawscalar1a-assembled-source/SHA256SUMS.txt
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -159,43 +159,43 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
 
-      - name: Build SOURCE1D debug APK
+      - name: Build RAWSCALAR1A debug APK
         shell: bash
         run: |
           set -o pipefail
           cd m9base/PhotonCamera
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/SOURCE1D_GRADLE.log"
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/RAWSCALAR1A_GRADLE.log"
 
       - name: Record APK SHA256
         if: success()
         run: |
           set -euo pipefail
-          sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee SOURCE1D_APK_SHA256.txt
+          sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee RAWSCALAR1A_APK_SHA256.txt
 
-      - name: Upload SOURCE1D build logs
+      - name: Upload RAWSCALAR1A build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-SOURCE1D-BUILDLOG
-          path: SOURCE1D_GRADLE.log
+          name: MMonochrome-RAWSCALAR1A-BUILDLOG
+          path: RAWSCALAR1A_GRADLE.log
           if-no-files-found: ignore
 
-      - name: Upload SOURCE1D assembled source
+      - name: Upload RAWSCALAR1A assembled source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-SOURCE1D-ASSEMBLED-SOURCE
-          path: source1d-assembled-source/
+          name: MMonochrome-RAWSCALAR1A-ASSEMBLED-SOURCE
+          path: rawscalar1a-assembled-source/
           if-no-files-found: ignore
 
-      - name: Upload SOURCE1D APK
+      - name: Upload RAWSCALAR1A APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-SOURCE1D-XYZY1A
+          name: MMonochrome-RAWSCALAR1A
           path: |
             m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
-            SOURCE1D_APK_SHA256.txt
+            RAWSCALAR1A_APK_SHA256.txt
             MONO1A_UPSTREAM.txt
           if-no-files-found: error
