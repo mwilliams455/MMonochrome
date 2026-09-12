@@ -104,7 +104,7 @@ jobs:
           j=json.loads((root/'evidence'/'dual_occurrences.json').read_text())
           for symbol,items in j['symbols'].items():
               for item in items:
-                  print(item['address'], item['filename'])
+                  print(f"{item['address']}\t{item['filename']}")
           PY
           while IFS=$'\t' read -r base file; do
             out="${file%.bin}.gnu.dis.txt"
@@ -123,7 +123,7 @@ jobs:
           done
           python tools/resolve_bfin_calls.py --map "$W/extracted/mm_bf0.map" "${ARGS[@]}" > "$E/dual_direct_calls.json"
           python - <<'PY'
-          import json, os, re
+          import json, os
           from pathlib import Path
           root=Path(os.environ['RUNNER_TEMP'])/'source1e-dual'/'evidence'
           out={'schema':'mmonochrom.source1e.dual_output_snippets.v1','files':{}}
