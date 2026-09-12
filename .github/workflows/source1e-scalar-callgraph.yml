@@ -145,12 +145,17 @@ jobs:
               for name, item in a['targets'].items()
               if item.get('monochrom')
           }
-          report = {'schema': 'mmonochrom.source1e.scalar_direct_refs.v1', 'targets': addresses, 'references': {}}
+          report = {
+              'schema': 'mmonochrom.source1e.scalar_direct_refs.v2',
+              'normalization': 'GNU Blackfin doubled 0x prefix collapsed before exact address matching',
+              'targets': addresses,
+              'references': {},
+          }
           for source in ('Process_Y','L3L1_Put8BitY','Process_Shading','Process_Contrast','Run'):
-              text = (e / f'mm_{source}.gnu.dis.txt').read_text(errors='replace').lower()
+              text = (e / f'mm_{source}.gnu.dis.txt').read_text(errors='replace').lower().replace('0x0x', '0x')
               hits = {}
               for target, addr in addresses.items():
-                  n = len(re.findall(r'\b' + re.escape(addr) + r'\b', text))
+                  n = len(re.findall(r'(?<![0-9a-f])' + re.escape(addr) + r'(?![0-9a-f])', text))
                   if n:
                       hits[target] = n
               report['references'][source] = hits
