@@ -14,6 +14,7 @@ on:
       - 'tools/scan_bfin_callgraph.py'
       - 'tools/verify_source1e_scalar_semantics.py'
       - 'tools/verify_source1e_run_dispatch.py'
+      - 'tools/verify_source1e_buffer_lineage.py'
 
 permissions:
   contents: read
@@ -127,6 +128,22 @@ jobs:
             --run-dis "$E/mm_Run.gnu.dis.txt" \
             --strict > "$E/run_dispatch.json"
           cat "$E/run_dispatch.json"
+
+      - name: Verify primary scalar buffer lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          E="$W/evidence"
+          python tools/verify_source1e_buffer_lineage.py \
+            --init-bin "$W/functions/mm_InitL1MemoryProcessing.bin" --init-dis "$E/mm_InitL1MemoryProcessing.gnu.dis.txt" \
+            --get-bin "$W/functions/mm_L3L1_Get.bin" --get-dis "$E/mm_L3L1_Get.gnu.dis.txt" \
+            --shading-bin "$W/functions/mm_Process_Shading.bin" --shading-dis "$E/mm_Process_Shading.gnu.dis.txt" \
+            --contrast-bin "$W/functions/mm_Process_Contrast.bin" --contrast-dis "$E/mm_Process_Contrast.gnu.dis.txt" \
+            --y-bin "$W/functions/mm_Process_Y.bin" --y-dis "$E/mm_Process_Y.gnu.dis.txt" \
+            --run-bin "$W/functions/mm_Run.bin" --run-dis "$E/mm_Run.gnu.dis.txt" \
+            --strict > "$E/buffer_lineage.json"
+          cat "$E/buffer_lineage.json"
 
       - name: Resolve direct calls to bf0 fixed records
         shell: bash
