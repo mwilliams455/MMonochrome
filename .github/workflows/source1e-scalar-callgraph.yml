@@ -1,0 +1,158 @@
+name: SOURCE1E Scalar Direct-Call Trace
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/source1e-processy
+    paths:
+      - '.github/workflows/source1e-scalar-callgraph.yml'
+      - 'tools/recover_m9_mm_shared_key.py'
+      - 'tools/pwad.py'
+      - 'tools/extract_source1e_targets.py'
+      - 'tools/resolve_bfin_calls.py'
+
+permissions:
+  contents: read
+
+jobs:
+  scalar-callgraph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install or build GNU Blackfin objdump
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-multiarch curl xz-utils build-essential jq
+          OBJDUMP="$(command -v objdump)"
+          if ! "$OBJDUMP" -i 2>/dev/null | grep -Eiq 'bfin|blackfin'; then
+            cd "$RUNNER_TEMP"
+            curl --fail --location --retry 4 --retry-all-errors -o binutils-2.44.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
+            tar -xf binutils-2.44.tar.xz
+            mkdir -p binutils-build && cd binutils-build
+            ../binutils-2.44/configure --target=bfin-elf --disable-nls --disable-werror --disable-gdb --disable-gas --disable-ld --disable-sim
+            make -j2 all-binutils
+            OBJDUMP="$PWD/binutils/objdump"
+          fi
+          "$OBJDUMP" --version | head -1
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
+
+      - name: Download and decrypt canonical firmware pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          mkdir -p "$W/evidence" "$W/extracted" "$W/functions"
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$W/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$W/m9.upd" | sha256sum -c --strict
+          echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$W/mm.upm" | sha256sum -c --strict
+          python tools/recover_m9_mm_shared_key.py "$W/m9.upd" "$W/mm.upm" --m9-out "$W/m9.dec" --mm-out "$W/mm.dec" --meta-out "$W/evidence/recovery_meta.json"
+
+      - name: Extract Monochrom BF561 bf0 assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          PYTHONPATH=tools python - <<'PY'
+          import os
+          from pathlib import Path
+          from pwad import get_lump
+          root = Path(os.environ['RUNNER_TEMP']) / 'source1e-calls'
+          fw = (root / 'mm.dec').read_bytes()
+          out = root / 'extracted'
+          for name in ('bf0', 'bf0.map'):
+              (out / f'mm_{name}').write_bytes(get_lump(fw, ['BF561', name]).data)
+          PY
+
+      - name: Extract exact target routines
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          python tools/extract_source1e_targets.py \
+            --mono-ldr "$W/extracted/mm_bf0" \
+            --mono-map "$W/extracted/mm_bf0.map" \
+            --out-dir "$W/functions" \
+            --strict > "$W/evidence/function_anchors.json"
+
+      - name: Disassemble scalar targets and Run
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          E="$W/evidence"
+          A="$E/function_anchors.json"
+          for name in Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Run; do
+            file="$W/functions/mm_${name}.bin"
+            base=$(jq -r --arg n "$name" '.targets[$n].monochrom.address // empty' "$A")
+            [ -f "$file" ] && [ -n "$base" ] || { echo "missing $name function anchor" >&2; exit 1; }
+            "$OBJDUMP" -D -b binary -m bfin --adjust-vma="$base" "$file" > "$E/mm_${name}.gnu.dis.txt"
+          done
+
+      - name: Resolve direct calls to bf0 fixed records
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          E="$W/evidence"
+          python tools/resolve_bfin_calls.py \
+            --map "$W/extracted/mm_bf0.map" \
+            --disassembly "$E/mm_Process_Y.gnu.dis.txt" \
+            --disassembly "$E/mm_L3L1_Put8BitY.gnu.dis.txt" \
+            --disassembly "$E/mm_Process_Shading.gnu.dis.txt" \
+            --disassembly "$E/mm_Process_Contrast.gnu.dis.txt" \
+            --disassembly "$E/mm_Run.gnu.dis.txt" \
+            > "$E/direct_calls.json"
+          cat "$E/direct_calls.json"
+
+      - name: Record direct references among scalar targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/source1e-calls"
+          PYTHONPATH=tools python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'source1e-calls'
+          e = root / 'evidence'
+          a = json.loads((e / 'function_anchors.json').read_text())
+          addresses = {
+              name: item['monochrom']['address'].lower()
+              for name, item in a['targets'].items()
+              if item.get('monochrom')
+          }
+          report = {'schema': 'mmonochrom.source1e.scalar_direct_refs.v1', 'targets': addresses, 'references': {}}
+          for source in ('Process_Y','L3L1_Put8BitY','Process_Shading','Process_Contrast','Run'):
+              text = (e / f'mm_{source}.gnu.dis.txt').read_text(errors='replace').lower()
+              hits = {}
+              for target, addr in addresses.items():
+                  n = len(re.findall(r'\b' + re.escape(addr) + r'\b', text))
+                  if n:
+                      hits[target] = n
+              report['references'][source] = hits
+          (e / 'scalar_direct_refs.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          PY
+
+      - name: Upload text evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SOURCE1E-SCALAR-CALLGRAPH-TEXT-EVIDENCE
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/source1e-calls/evidence/*
+
+      - name: Remove firmware and extracted binary material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/source1e-calls"
