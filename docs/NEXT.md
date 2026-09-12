@@ -37,37 +37,47 @@ This is strong evidence that, on the tested scene, post-demosaic RGB weighting m
 
 Do not continue inventing RGB luma coefficient sets. A colour-discriminating daylight capture remains useful as confirmation, but it does not block SOURCE1E.
 
-## Important BF561 topology correction
+## BF561 topology provenance gate
 
-The canonical Monochrom `bf0.map` does **not** retain the named M9 colour-camera stages:
+An old project handoff reported broad shared **symbol-like tokens** and included names such as `Process_FPGA_Y`, `Process_FPGA_YCrCb`, `Process_WB`, and `ExecuteColorMatrix_14FM1` in that shared vocabulary.
 
-```text
-Process_WB
-ExecuteColorMatrix_14FM1
-Process_FPGA_Y
-Process_FPGA_YCrCb
-SetMatrixL3
-L3L1_Put16BitRGB
-L3L1_Put3rgb
-L3L1_Put3yycrcb
-```
-
-Monochrom does retain:
+The later canonical fixed-record analysis reports a stricter and conflicting result for the Monochrom imaging `bf0.map`:
 
 ```text
-Process_Y
-L3L1_Put8BitY
-Process_Shading
-Process_Contrast
-Process_Noise
-Process_Sharpness
+Monochrom bf0.map = 13,440 bytes / 420 fixed records
+entire Monochrom bf0.map occurs inside M9 bf0.map at offset 0x3940
 ```
 
-Therefore `Process_FPGA_Y` is no longer a Monochrom trace target. M9 BT.601 Y remains a useful control/provenance reference only.
+Under that exact `(name,address,size)` comparison, the M9 WB/ColorMatrix/FPGA-Y/YCbCr records are absent from Monochrom `bf0`, while `Process_Y`, `L3L1_Put8BitY`, Shading, Contrast, Noise, and Sharpness remain.
+
+The exact fixed-record/byte-containment result is the stronger basis for current `bf0` trace targeting, but the historical discrepancy must be reproduced rather than silently forgotten. Its cause is open.
+
+`tools/trace_scalar_topology.py` now performs the required provenance rerun. Before instruction-level SOURCE1E work, run it against the original maps in strict mode. When both `bf1.map` files are available, include them as an explicit cross-check because the canonical baseline reports those maps byte-identical.
 
 ## Immediate research target — SOURCE1E
 
-Recover the actual scalar buffer lineage:
+### Gate A — reproduce map provenance
+
+```bash
+python tools/trace_scalar_topology.py \
+  --mono-map /path/to/mm/BF561/bf0.map \
+  --m9-map /path/to/m9/BF561/bf0.map \
+  --mono-bf1-map /path/to/mm/BF561/bf1.map \
+  --m9-bf1-map /path/to/m9/BF561/bf1.map \
+  --strict
+```
+
+Required pass conditions include:
+
+- 13,440-byte / 420-record Monochrom `bf0.map`;
+- exact containment in M9 `bf0.map` at `0x3940`;
+- every Monochrom exact tuple present in M9;
+- disputed M9 colour-path records absent from Monochrom `bf0` and present in M9 `bf0`;
+- optional `bf1.map` pair byte-identical when supplied.
+
+### Gate B — recover scalar buffer lineage
+
+If Gate A reproduces the canonical result, the active named targets are:
 
 ```text
 native producer
@@ -75,16 +85,16 @@ native producer
   -> L3L1_Put8BitY
 ```
 
-Priority work:
+Then:
 
-1. run `tools/trace_scalar_topology.py` against locally extracted Monochrom `bf0.map` and, when available, the matching M9 imaging-overlay map;
-2. extract exact `Process_Y` and `L3L1_Put8BitY` function bytes from Monochrom BF561;
-3. extend the existing strict small Blackfin decoder only for opcodes actually present in those routines;
-4. recover entry arguments, pointers, widths, strides, arithmetic, shifts/clamps and calls;
-5. trace the buffers backward to their producer and forward through Shading/Contrast/output;
-6. recover runtime processing-list order rather than treating dispatcher case order as photographic order.
+1. extract exact `Process_Y` and `L3L1_Put8BitY` bytes from Monochrom BF561;
+2. extend the existing strict small Blackfin decoder only for opcodes actually present;
+3. recover entry arguments, pointers, sample widths, strides, arithmetic, shifts/clamps, and calls;
+4. trace buffers backward to their producer and forward through Shading/Contrast/output;
+5. recover runtime processing-list order rather than treating dispatcher case order as photographic order;
+6. inspect BF547/FPGA only where buffer/control-flow evidence points there.
 
-Do not claim native CCD/FPGA semantics until that consumer/producer chain is closed.
+Do not claim native CCD/FPGA semantics until that producer/consumer chain is closed.
 
 ## Xiaomi source-adapter consequence
 
@@ -122,4 +132,4 @@ Only after the scalar source/input path is stable:
 - exact pedestal producer semantics;
 - performance optimization of the Android renderer.
 
-The immediate fidelity bottleneck is no longer curve selection. It is the native scalar producer consumed by the Monochrom processing path.
+The immediate fidelity bottleneck is the native scalar producer, but the immediate forensic prerequisite is now the **bf0 provenance rerun** so the old token-vs-fixed-record contradiction is closed before further architectural claims are made.
