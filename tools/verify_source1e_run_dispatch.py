@@ -36,7 +36,7 @@ EXPECTED = [
         "call_site": "0xffa01db4",
         "call_target": "0xffa007c0",
         "name": "Process_Blinker",
-        "resume": "0xffa01b42",
+        "resume": "0xffa01b3c",
     },
     {
         "bit": 6,
@@ -135,7 +135,8 @@ def main() -> None:
             problems,
         )
 
-        # Search a short post-call window for the explicit return to the next bit test.
+        # Search a short post-call window for the explicit return to the next
+        # dispatch test or its immediate prelude.
         call_addr = address(item["call_site"])
         resume_found = False
         for addr in sorted(a for a in lines if call_addr < a <= call_addr + 0x100):
