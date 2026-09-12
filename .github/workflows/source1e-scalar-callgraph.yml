@@ -95,7 +95,7 @@ jobs:
           W="$RUNNER_TEMP/source1e-calls"
           E="$W/evidence"
           A="$E/function_anchors.json"
-          TARGETS='Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Process_Blinker InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start Run'
+          TARGETS='Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Process_Blinker InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start SetProcess StartInterpolation_Jolos Run'
           for name in $TARGETS; do
             file="$W/functions/mm_${name}.bin"
             base=$(jq -r --arg n "$name" '.targets[$n].monochrom.address // empty' "$A")
@@ -152,7 +152,7 @@ jobs:
           W="$RUNNER_TEMP/source1e-calls"
           E="$W/evidence"
           ARGS=()
-          for name in Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Process_Blinker InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start Run; do
+          for name in Process_Y L3L1_Put8BitY Process_Shading Process_Contrast Process_Blinker InitL1MemoryProcessing DMACopyWindow L3L1_Get L3L1_Put16Bit L3L1_Put8Bit IP_Start SetProcess StartInterpolation_Jolos Run; do
             ARGS+=(--disassembly "$E/mm_${name}.gnu.dis.txt")
           done
           python tools/resolve_bfin_calls.py --map "$W/extracted/mm_bf0.map" "${ARGS[@]}" > "$E/direct_calls.json"
@@ -194,10 +194,10 @@ jobs:
           sources = (
               'Process_Y','L3L1_Put8BitY','Process_Shading','Process_Contrast','Process_Blinker',
               'InitL1MemoryProcessing','DMACopyWindow','L3L1_Get','L3L1_Put16Bit','L3L1_Put8Bit',
-              'IP_Start','Run'
+              'IP_Start','SetProcess','StartInterpolation_Jolos','Run'
           )
           report = {
-              'schema': 'mmonochrom.source1e.scalar_direct_refs.v3',
+              'schema': 'mmonochrom.source1e.scalar_direct_refs.v4',
               'normalization': 'GNU Blackfin doubled 0x prefix collapsed before exact address matching',
               'targets': addresses,
               'references': {},
