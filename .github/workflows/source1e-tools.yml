@@ -1,0 +1,25 @@
+name: Validate SOURCE1E Forensic Tools
+
+on:
+  push:
+    branches:
+      - research/source1e-processy
+    paths:
+      - 'tools/trace_scalar_topology.py'
+      - 'tools/extract_source1e_targets.py'
+      - 'tools/test_source1e_tools.py'
+      - '.github/workflows/source1e-tools.yml'
+  workflow_dispatch:
+
+jobs:
+  source1e-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run synthetic SOURCE1E tool tests
+        run: python tools/test_source1e_tools.py
