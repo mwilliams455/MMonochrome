@@ -1,0 +1,3 @@
+MANUALISO1B_PRESERVE1A
+Purpose: preserve selected physical manual ISO when the manual panel is collapsed.
+Photographic renderer path remains frozen.
