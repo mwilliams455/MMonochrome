@@ -1,0 +1,204 @@
+name: Build MMonochrom SHARPSTD1B ISO Bridge A/B MANUALISO1C
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - apk/mono1a-rawscalar1b-sharpstd1b-isobridgeab1a-manualiso1c
+    paths:
+      - 'apk/mono1a/**'
+      - '.github/workflows/build-mono1a-sharpstd1b-isobridgeab1a-manualiso1c.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Replay exact MANUALISO1B assembly preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_WF='.github/workflows/build-mono1a-sharpstd1b-isobridgeab1a-manualiso1b.yml'
+          test -f "$BASE_WF"
+          python3 - <<'PY'
+          from pathlib import Path
+          wf = Path('.github/workflows/build-mono1a-sharpstd1b-isobridgeab1a-manualiso1b.yml')
+          lines = wf.read_text().splitlines()
+          steps = [
+              ('Verify overlay scripts', 'root'),
+              ('Verify frozen M9 patch syntax', 'm9base'),
+              ('Replay exact frozen M9 parent assembly', 'm9base'),
+              ('Apply validated frozen MHC demosaic chain', 'm9base'),
+              ('Apply validated M Monochrom RAWSCALAR1B baseline', 'root'),
+              ('Generate canonical Standard sharpness LUT header', 'root'),
+              ('Apply sharpness bridge and manual ISO fixes', 'root'),
+          ]
+          manifest = []
+          for idx, (name, cwd) in enumerate(steps):
+              target = '      - name: ' + name
+              try:
+                  i = lines.index(target)
+              except ValueError:
+                  raise SystemExit('MANUALISO1C parent step missing: ' + name)
+              while i < len(lines) and lines[i].strip() != 'run: |':
+                  i += 1
+              if i >= len(lines):
+                  raise SystemExit('MANUALISO1C parent run block missing: ' + name)
+              i += 1
+              out = []
+              while i < len(lines):
+                  line = lines[i]
+                  if line.startswith('      - name:'):
+                      break
+                  if line.startswith('          '):
+                      out.append(line[10:])
+                  elif not line.strip():
+                      out.append('')
+                  else:
+                      raise SystemExit('MANUALISO1C unexpected indentation in ' + name + ': ' + line)
+                  i += 1
+              path = Path(f'/tmp/manualiso1c_parent_{idx}.sh')
+              path.write_text('\n'.join(out) + '\n')
+              manifest.append((str(path), cwd, name))
+          Path('/tmp/manualiso1c_manifest.tsv').write_text(
+              ''.join(f'{p}\t{cwd}\t{name}\n' for p, cwd, name in manifest)
+          )
+          PY
+          while IFS=$'\t' read -r script cwd name; do
+            echo "===== replay: $name ====="
+            if [ "$cwd" = "m9base" ]; then
+              (cd m9base && bash "$script")
+            else
+              bash "$script"
+            fi
+          done < /tmp/manualiso1c_manifest.tsv
+
+      - name: Apply MANUALISO1C SHUTTERLOCK1A
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 -m py_compile apk/mono1a/apply-manualiso-preserve1c.py
+          R="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java"
+          N="$ROOT/app/src/main/cpp/m9color_jni.cpp"
+          H="$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc"
+          sha256sum "$R" "$N" "$H" > /tmp/manualiso1c_photo_before.sha256
+          python3 apk/mono1a/apply-manualiso-preserve1c.py "$ROOT"
+          sha256sum "$R" "$N" "$H" > /tmp/manualiso1c_photo_after.sha256
+          diff -u /tmp/manualiso1c_photo_before.sha256 /tmp/manualiso1c_photo_after.sha256
+
+      - name: Verify MANUALISO1C and frozen photographic path
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          R="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java"
+          H="$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc"
+          PC="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/manual/ParamController.java"
+          E="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java"
+          grep -n 'monochromPrimarySource.*RAWSCALAR1B_FIXED_D65' "$R"
+          grep -n 'MM_MONO_STD_SHARP_BORDER = 2' "$H"
+          grep -n 'MANUALISO1C_SHUTTERLOCK_SETISO' "$PC"
+          grep -n 'MANUALISO1C_SHUTTERLOCK_SETSHUTTER' "$PC"
+          grep -n 'MANUALISO1C_SHUTTERLOCK_SETUP' "$PC"
+          grep -n 'MANUALISO1C_TRACE_FINAL_PHYSICAL' "$E"
+          grep -n 'pair.iso = (int) (currentManISO \* 100.0 / pair.isolow);' "$E"
+          cat > MANUALISO1C_UPSTREAM.txt <<'EOF'
+          M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf
+          MANUALISO1B_PARENT=cd0feab2d0972f62a0547a1c5867c29870a365b2
+          MM_CURVE02_SHA256=7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752
+          MM_SHARP_BANK_SHA256=282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10
+          SOURCE_REVISION=MONO1A_RAWSCALAR1B_SHARPSTD1B_ISOBRIDGEAB1A_MANUALISO1C_SHUTTERLOCK1A
+          BASELINE_POLICY=RAWSCALAR1B_PROMOTED1A_PRIMARY_UNCHANGED
+          PHYSICAL_SHARP_POLICY=SHARPSTD1A_UNCHANGED
+          NORMISO_POLICY=DIAGNOSTIC_ONLY_UNCHANGED
+          MANUAL_PAIR_POLICY=MODEL_SELECTED_ISO_AND_SHUTTER_PRESERVED_TO_PREVIEW_AND_CAPTURE_ALLOCATOR
+          ALLOCATOR_POLICY=UNCHANGED_EXCEPT_FINAL_PHYSICAL_TRACE
+          EOF
+
+      - name: Snapshot assembled source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          mkdir -p manualiso1c-assembled-source
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" manualiso1c-assembled-source/
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" manualiso1c-assembled-source/
+          cp "$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc" manualiso1c-assembled-source/
+          cp "$ROOT/circularbarlib/src/main/java/com/particlesdevs/photoncamera/circularbarlib/camera/CameraProperties.java" manualiso1c-assembled-source/
+          cp "$ROOT/circularbarlib/src/main/java/com/particlesdevs/photoncamera/circularbarlib/control/models/IsoModel.java" manualiso1c-assembled-source/
+          cp "$ROOT/circularbarlib/src/main/java/com/particlesdevs/photoncamera/circularbarlib/console/ManualModeConsoleImpl.java" manualiso1c-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/control/Swipe.java" manualiso1c-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java" manualiso1c-assembled-source/ProcessingIsoExpoSelector.java
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/manual/ParamController.java" manualiso1c-assembled-source/
+          cp MANUALISO1B_UPSTREAM.txt MANUALISO1B_LUT_GENERATION.txt MANUALISO1C_UPSTREAM.txt manualiso1c-assembled-source/
+          sha256sum manualiso1c-assembled-source/* | tee manualiso1c-assembled-source/SHA256SUMS.txt
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Build MANUALISO1C debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MANUALISO1C_GRADLE.log"
+
+      - name: Record APK SHA256
+        if: success()
+        run: sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee MANUALISO1C_APK_SHA256.txt
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-MANUALISO1C-BUILDLOG
+          path: MANUALISO1C_GRADLE.log
+          if-no-files-found: ignore
+
+      - name: Upload assembled source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-MANUALISO1C-ASSEMBLED-SOURCE
+          path: manualiso1c-assembled-source/
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrom-RAWSCALAR1B-SHARPSTD1B-ISOBRIDGEAB1A-MANUALISO1C
+          path: |
+            m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
+            MANUALISO1C_APK_SHA256.txt
+            MANUALISO1C_UPSTREAM.txt
+          if-no-files-found: error
