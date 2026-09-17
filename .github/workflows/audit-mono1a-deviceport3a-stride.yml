@@ -1,0 +1,122 @@
+name: Audit MMonochrome DEVICEPORT3A RAW Stride
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/deviceport3a-raw-stride-audit
+    paths:
+      - 'apk/mono1a/verify-deviceport2b-blackorigin.py'
+      - '.github/workflows/audit-mono1a-deviceport3a-stride.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout pinned M9 portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Replay sealed DEVICEPORT2B assembly through stride audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          wf=Path('.github/workflows/build-mono1a-deviceport2b-currentbaseline.yml')
+          lines=wf.read_text().splitlines()
+          names=[
+              ('Verify inputs','.'),
+              ('Verify frozen M9 patch syntax','m9base'),
+              ('Replay exact frozen M9 parent assembly','m9base'),
+              ('Apply validated frozen MHC chain','m9base'),
+              ('Apply RAWSCALAR1B base','.'),
+              ('Generate canonical Standard sharpness LUT','.'),
+              ('Apply SHARPSTD1B and MANUALISO1B','.'),
+              ('Apply portable CFA geometry and black-plane origin','.'),
+              ('Verify latest functional baseline plus portability','.'),
+          ]
+          for idx,(name,cwd) in enumerate(names):
+              target='      - name: '+name
+              try:
+                  i=lines.index(target)
+              except ValueError:
+                  raise SystemExit('sealed step missing: '+name)
+              while i<len(lines) and lines[i].strip()!='run: |': i+=1
+              if i>=len(lines): raise SystemExit('run block missing: '+name)
+              i+=1; out=[]
+              while i<len(lines):
+                  line=lines[i]
+                  if line.startswith('      - name:'): break
+                  if line.startswith('          '): out.append(line[10:])
+                  elif not line.strip(): out.append('')
+                  else: raise SystemExit('unexpected indentation in '+name+': '+line)
+                  i+=1
+              p=Path(f'/tmp/deviceport3a_{idx:02d}.sh')
+              p.write_text('\n'.join(out)+'\n')
+              print(p, cwd, name)
+          Path('/tmp/deviceport3a_steps.tsv').write_text('\n'.join(
+              f'/tmp/deviceport3a_{i:02d}.sh\t{cwd}\t{name}'
+              for i,(name,cwd) in enumerate(names))+'\n')
+          PY
+          while IFS=$'\t' read -r script cwd name; do
+            echo "===== DEVICEPORT3A replay: $name ====="
+            if [ "$cwd" = "m9base" ]; then
+              (cd m9base && GITHUB_WORKSPACE="$GITHUB_WORKSPACE/m9base" bash "$script")
+            else
+              bash "$script"
+            fi
+          done < /tmp/deviceport3a_steps.tsv
+
+      - name: Snapshot exact RAW stride contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT=deviceport3a-stride-audit
+          mkdir -p "$OUT"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/util/Allocator.java" "$OUT/"
+          cp "$ROOT/app/src/main/cpp/allocator.cpp" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" "$OUT/"
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" "$OUT/"
+          {
+            echo 'DEVICEPORT3A_AUDIT_ONLY=1'
+            echo 'DEVICEPORT2B_PARENT=ee5af16484a54539b5d9018f1ad186f423e1616e'
+            echo 'M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf'
+            echo 'M9_PORTABILITY_TOOLS=57476072a146d53da11235667f9681e64427c9cf'
+            echo 'PHOTOGRAPHIC_POLICY_CHANGED=0'
+          } > "$OUT/DEVICEPORT3A_AUDIT.txt"
+          grep -nE 'capacity = image.getPlanes|RowStride|PixelStride|new ImageFrame' "$OUT/SaverImplementation.java" | tee "$OUT/SAVER_STRIDE_LINES.txt"
+          grep -nE 'allocateAndCopy\(|row_stride' "$OUT/ImageFrame.java" "$OUT/Allocator.java" "$OUT/allocator.cpp" | tee "$OUT/ALLOCATOR_STRIDE_LINES.txt"
+          grep -nE 'expectedBytes|byteIndex' "$OUT/M9R35Renderer.java" "$OUT/m9color_jni.cpp" | tee "$OUT/RENDERER_PACKING_LINES.txt"
+          sha256sum "$OUT"/* | tee "$OUT/SHA256SUMS.txt"
+
+      - name: Upload DEVICEPORT3A stride audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DEVICEPORT3A-RAW-STRIDE-AUDIT
+          path: deviceport3a-stride-audit/
+          if-no-files-found: error
