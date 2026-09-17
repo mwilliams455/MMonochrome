@@ -1,0 +1,259 @@
+name: Build MMonochrome DEVICEPORT2B CURRENT BASELINE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/deviceport2b-currentbaseline-portable
+    paths:
+      - 'apk/mono1a/**'
+      - 'tools/**'
+      - 'docs/MONO_PHYSICAL_SENSOR_SOURCE_ADAPTER_CONTRACT.md'
+      - '.github/workflows/build-mono1a-deviceport2b-currentbaseline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout pinned M9 portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Verify inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C m9base rev-parse HEAD)" = "fb1db92ef78df70442b9fee879795e584f2170cf"
+          test "$(git -C m9port rev-parse HEAD)" = "57476072a146d53da11235667f9681e64427c9cf"
+          python3 -m py_compile \
+            apk/mono1a/apply-mono1a.py apk/mono1a/apply-source1d.py \
+            apk/mono1a/apply-rawscalar1a.py apk/mono1a/apply-rawscalar1b.py \
+            apk/mono1a/promote-rawscalar1b.py apk/mono1a/apply-sharpstd1a.py \
+            apk/mono1a/apply-sharpstd1b-isobridgeab1a.py \
+            apk/mono1a/apply-manualiso-physical1a.py apk/mono1a/apply-manualiso-preserve1b.py \
+            apk/mono1a/promote-sourceadapter1a-manualiso1b.py \
+            apk/mono1a/apply-deviceport2a-authority-origin.py apk/mono1a/verify-deviceport2a-authority-origin.py \
+            apk/mono1a/apply-deviceport2b-blackorigin.py apk/mono1a/verify-deviceport2b-blackorigin.py \
+            m9port/patches/apply-m9cam-cfaabstract1b-ultrawide1a.py
+          python3 -m py_compile tools/generate_mm_standard_sharp_header.py tools/recover_leica_m9_mm_shared_key.py tools/pwad.py
+          cat > DEVICEPORT2B_UPSTREAM.txt <<'EOF'
+          M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf
+          M9_PORTABILITY_TOOLS=57476072a146d53da11235667f9681e64427c9cf
+          FUNCTIONAL_BASELINE=SHARPSTD1B_ISOBRIDGEAB1A_MANUALISO1B
+          PRIMARY_SOURCE=SOURCE1D_NATIVE_DNG_XYZ_Y
+          SOURCE_CFA=PHYSICAL_CAMERA2_CONVENTIONAL_BAYER
+          RAW_ORIGIN=PHYSICAL_SENSOR_GEOMETRY_FAIL_CLOSED
+          BLACK_LEVEL_PLANES=SENSOR_GRID_2X2_ORIGIN_AWARE
+          LSM_CHANNELS=CAMERA2_R_GEVEN_GODD_B_SENSOR_ROW_SEMANTICS
+          COBALT_SOURCE_ROLE=NONE
+          HSM_SOURCE_ROLE=NONE
+          MM_CURVE02_SHA256=7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752
+          MM_SHARP_BANK_SHA256=282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10
+          EOF
+
+      - name: Verify frozen M9 patch syntax
+        working-directory: m9base
+        run: |
+          set -euo pipefail
+          python3 -m py_compile patches/apply-m9cam-basishsm1p-demosaicmhc1a.py patches/fix-m9cam-basishsm1p-demosaicmhc1a-lifetime1a.py patches/verify-m9cam-basishsm1p-demosaicmhc1a.py
+          python3 -m py_compile patches/apply-m9cam-basishsm1p-demosaicab1a.py patches/verify-m9cam-basishsm1p-demosaicab1a.py patches/apply-m9cam-basishsm1p-demosaicmhcneutral1a.py patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a.py
+          python3 -m py_compile patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py
+
+      - name: Replay exact frozen M9 parent assembly
+        working-directory: m9base
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GITHUB_WORKSPACE="$PWD"
+          python3 - <<'PY'
+          from pathlib import Path
+          wf=Path('.github/workflows/build-m9cam-basishsm1p-curvedomain1c-upstreamaxis1a.yml')
+          lines=wf.read_text().splitlines()
+          names=['Replay exact CURVEDOMAIN1B parent assembly','Apply CURVEDOMAIN1C UPSTREAMAXIS1A read-only extension']
+          for idx,name in enumerate(names):
+              i=lines.index('      - name: '+name)
+              while i<len(lines) and lines[i].strip()!='run: |': i+=1
+              i+=1; out=[]
+              while i<len(lines):
+                  line=lines[i]
+                  if line.startswith('      - name:'): break
+                  if line.startswith('          '): out.append(line[10:])
+                  elif not line.strip(): out.append('')
+                  else: raise SystemExit('unexpected parent indentation: '+line)
+                  i+=1
+              Path(f'/tmp/mono_deviceport2b_parent_{idx}.sh').write_text('\n'.join(out)+'\n')
+          PY
+          for s in /tmp/mono_deviceport2b_parent_*.sh; do bash "$s"; done
+
+      - name: Apply validated frozen MHC chain
+        working-directory: m9base
+        run: |
+          set -euxo pipefail
+          ROOT="$PWD/PhotonCamera"
+          python3 patches/apply-m9cam-basishsm1p-demosaicmhc1a.py "$ROOT"
+          python3 patches/fix-m9cam-basishsm1p-demosaicmhc1a-lifetime1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhc1a.py "$ROOT"
+          python3 patches/apply-m9cam-basishsm1p-demosaicab1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicab1a.py "$ROOT"
+          python3 patches/apply-m9cam-basishsm1p-demosaicmhcneutral1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a.py "$ROOT"
+          python3 patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
+
+      - name: Apply RAWSCALAR1B base
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-mono1a.py "$ROOT"
+          python3 apk/mono1a/apply-source1d.py "$ROOT"
+          python3 apk/mono1a/apply-rawscalar1a.py "$ROOT"
+          python3 apk/mono1a/apply-rawscalar1b.py "$ROOT"
+          python3 apk/mono1a/promote-rawscalar1b.py "$ROOT"
+
+      - name: Generate canonical Standard sharpness LUT
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          mkdir -p "$RUNNER_TEMP/mmsharp"
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmsharp/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors -o "$RUNNER_TEMP/mmsharp/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          python3 tools/recover_leica_m9_mm_shared_key.py "$RUNNER_TEMP/mmsharp/m9.upd" "$RUNNER_TEMP/mmsharp/mm.upm" --mm-out "$RUNNER_TEMP/mmsharp/mm.dec" --meta-out "$RUNNER_TEMP/mmsharp/recovery_meta.json"
+          python3 tools/generate_mm_standard_sharp_header.py "$RUNNER_TEMP/mmsharp/mm.dec" --out "$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc" | tee DEVICEPORT2B_LUT_GENERATION.txt
+          grep -q 'bank_sha256=282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10' DEVICEPORT2B_LUT_GENERATION.txt
+
+      - name: Apply SHARPSTD1B and MANUALISO1B
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-sharpstd1a.py "$ROOT"
+          python3 apk/mono1a/apply-sharpstd1b-isobridgeab1a.py "$ROOT"
+          python3 apk/mono1a/apply-manualiso-physical1a.py "$ROOT"
+          python3 apk/mono1a/apply-manualiso-preserve1b.py "$ROOT"
+          python3 apk/mono1a/promote-sourceadapter1a-manualiso1b.py "$ROOT"
+
+      - name: Apply portable CFA geometry and black-plane origin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          TARGET="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render"
+          cp apk/mono1a/payload/M9CfaResolver.java "$TARGET/M9CfaResolver.java"
+          python3 m9port/patches/apply-m9cam-cfaabstract1b-ultrawide1a.py "$ROOT"
+          python3 apk/mono1a/apply-deviceport2a-authority-origin.py "$ROOT"
+          python3 apk/mono1a/verify-deviceport2a-authority-origin.py "$ROOT"
+          python3 apk/mono1a/apply-deviceport2b-blackorigin.py "$ROOT"
+          python3 apk/mono1a/verify-deviceport2b-blackorigin.py "$ROOT"
+
+      - name: Verify latest functional baseline plus portability
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          R="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java"
+          H="$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc"
+          I="$ROOT/circularbarlib/src/main/java/com/particlesdevs/photoncamera/circularbarlib/control/models/IsoModel.java"
+          E="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java"
+          grep -n 'SHARPSTD1B_NORMISO' "$R"
+          grep -n 'MONO1A_SOURCEADAPTER1A_MANUALISO1B_PORTABLE' "$R"
+          grep -n 'MONO_DEVICEPORT2A_CFA_ORIGIN' "$R"
+          grep -n 'MONO_DEVICEPORT2B_BLACK_ORIGIN' "$R"
+          grep -n 'monochromPrimarySource.*SOURCE1D_NATIVE_DNG_XYZ_Y' "$R"
+          grep -n 'monochromManualIsoBaselineRetained.*MANUALISO1B' "$R"
+          grep -n 'monochromSourceCobaltRuntimeDependency.*false' "$R"
+          grep -n 'monochromSourceHsmRuntimeDependency.*false' "$R"
+          grep -n 'MM_MONO_STD_SHARP_BORDER = 2' "$H"
+          grep -n 'MANUALISO1B_TRACE_SELECTED' "$I"
+          grep -n 'MANUALISO1B_TRACE_ALLOCATOR' "$E"
+          grep -n 'demosaicMhcBayer' "$R"
+          grep -n 'normalizeRawDirectOriginAware' "$R"
+          ! grep -q 'R3.5 v0.7 main-camera parity build expects RGGB CFA=0' "$R"
+
+      - name: Snapshot assembled source
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          mkdir -p deviceport2b-assembled-source
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" deviceport2b-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java" deviceport2b-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9CfaResolver.java" deviceport2b-assembled-source/
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" deviceport2b-assembled-source/
+          cp "$ROOT/app/src/main/cpp/mm_monochrom_standard_sharp_lut.inc" deviceport2b-assembled-source/
+          cp DEVICEPORT2B_UPSTREAM.txt DEVICEPORT2B_LUT_GENERATION.txt deviceport2b-assembled-source/
+          sha256sum deviceport2b-assembled-source/* | tee deviceport2b-assembled-source/SHA256SUMS.txt
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Build DEVICEPORT2B debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/DEVICEPORT2B_GRADLE.log"
+
+      - name: Record APK SHA256
+        if: success()
+        run: sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee DEVICEPORT2B_APK_SHA256.txt
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DEVICEPORT2B-BUILDLOG
+          path: DEVICEPORT2B_GRADLE.log
+          if-no-files-found: ignore
+
+      - name: Upload assembled source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DEVICEPORT2B-ASSEMBLED-SOURCE
+          path: deviceport2b-assembled-source/
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DEVICEPORT2B-CURRENT-BASELINE
+          path: |
+            m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
+            DEVICEPORT2B_APK_SHA256.txt
+            DEVICEPORT2B_UPSTREAM.txt
+          if-no-files-found: error
