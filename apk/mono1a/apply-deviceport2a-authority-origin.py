@@ -36,7 +36,6 @@ old_origin = '''        // DEVICEPORT1A deliberately did not infer RAW origin fr
 new_origin = '''        final MonoSourceRawOrigin2A sourceRawOrigin = resolveMonoSourceRawOrigin2A(\n                nativeCharacteristics, width, height);\n        final int sourceRawOriginX = sourceRawOrigin.x;\n        final int sourceRawOriginY = sourceRawOrigin.y;\n'''
 s = one(s, old_origin, new_origin, 'RAW origin authority')
 
-# Insert the geometry resolver immediately before the shared render core.
 anchor = '    private static RenderCore renderNativeProspectiveCore(ByteBuffer rawBuffer,\n'
 if s.count(anchor) != 1:
     raise SystemExit('DEVICEPORT2A render core anchor missing/ambiguous')
@@ -89,23 +88,19 @@ helper = r'''    private static final class MonoSourceRawOrigin2A {
 '''
 s = s.replace(anchor, helper + anchor, 1)
 
-# Add top-level authority telemetry after the render returns. This records why the
-# lattice was selected without making physical ID/topology a target-render selector.
 render_call_tail = '''                    encodedBlack, params.whiteLevel, params.whitePoint, cameraRotation, 0.0,\n                    characteristics, diagnosticCaptureResult1A, sourceCfaPattern);\n'''
 if s.count(render_call_tail) != 1:
     raise SystemExit('DEVICEPORT2A primary call tail missing/ambiguous')
 telemetry = '''            out.diagnostics.put("monoDevicePortRevision", "MONO_DEVICEPORT2A_CFA_ORIGIN");\n            out.diagnostics.put("sourceCfaAuthority", sourceCfaAuthority);\n            out.diagnostics.put("sourceCamera2CfaPattern", physicalCamera2CfaPattern);\n            out.diagnostics.put("sourcePhotonCfaBeforeAuthority", photonCfaPatternBeforeAuthority);\n            out.diagnostics.put("sourceResolvedCfaPattern", sourceCfaPattern);\n            out.diagnostics.put("sourceCameraIdUsedAsPhotographicPolicy", false);\n            out.diagnostics.put("sourceFocalLengthUsedAsPhotographicPolicy", false);\n'''
 s = s.replace(render_call_tail, render_call_tail + telemetry, 1)
 
-# Add origin evidence to the per-core diagnostics at a stable source-domain point.
-diag_anchor = '        d.put("nativeSourceInputHeight", height);\n'
+# Per-core source-domain telemetry: this anchor is after the physical shading stage
+# and therefore has access to the proven origin used by both CFA and LSM dispatch.
+diag_anchor = '            d.put("shadingParity1A", true);\n'
 if s.count(diag_anchor) != 1:
-    # Older scaffold may not have this exact field; use the target-independent source flag.
-    diag_anchor = '        d.put("nativeSourceProduction1A", true);\n'
-if s.count(diag_anchor) != 1:
-    raise SystemExit('DEVICEPORT2A source diagnostics anchor missing/ambiguous')
-origin_diag = '''        d.put("sourceRawOriginX", sourceRawOriginX);\n        d.put("sourceRawOriginY", sourceRawOriginY);\n        d.put("sourceRawOriginEvidence", sourceRawOrigin.evidence);\n        d.put("sourceRawOriginDerivedFromPhysicalGeometry", true);\n        d.put("sourceLensShadingPlaneSelection", "Camera2_R_Geven_Godd_B_with_sensor_row_parity");\n'''
-s = s.replace(diag_anchor, diag_anchor + origin_diag, 1)
+    raise SystemExit('DEVICEPORT2A shading diagnostics anchor missing/ambiguous')
+origin_diag = '''            d.put("sourceRawOriginX", sourceRawOriginX);\n            d.put("sourceRawOriginY", sourceRawOriginY);\n            d.put("sourceRawOriginEvidence", sourceRawOrigin.evidence);\n            d.put("sourceRawOriginDerivedFromPhysicalGeometry", true);\n            d.put("sourceLensShadingPlaneSelection", "Camera2_R_Geven_Godd_B_with_sensor_row_parity");\n'''
+s = s.replace(diag_anchor, origin_diag + diag_anchor, 1)
 
 R.write_text(s)
 print('MONO_DEVICEPORT2A_CFA_ORIGIN applied')
