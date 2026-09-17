@@ -47,3 +47,27 @@ if planes(0,1)!=[2,3,0,1]: raise SystemExit('originY plane oracle failed')
 if planes(1,1)!=[3,2,1,0]: raise SystemExit('originXY plane oracle failed')
 print('MONO DEVICEPORT2B black-origin verification OK')
 print(' - Monochrom neutral MHC parity preserved; foreign M9 closure-sharp path absent')
+
+# DEVICEPORT3A research-only audit. This changes no renderer or capture behavior;
+# it proves the exact frozen Photon scaffold contract feeding ImageFrame.buffer.
+F=root/'app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java'
+S=root/'app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java'
+A=root/'app/src/main/java/com/particlesdevs/photoncamera/util/Allocator.java'
+AC=root/'app/src/main/cpp/allocator.cpp'
+for p in (F,S,A,AC):
+    if not p.exists(): raise SystemExit('DEVICEPORT3A audit missing '+str(p))
+f,s,a,ac=F.read_text(),S.read_text(),A.read_text(),AC.read_text()
+need(s,'int capacity = image.getPlanes()[0].getBuffer().capacity();','plane buffer capacity capture')
+need(s,'image.getPlanes()[0].getRowStride() /','rowStride-derived ImageFrame width')
+need(s,'image.getPlanes()[0].getPixelStride();','pixelStride-derived ImageFrame width')
+need(s,'new ImageFrame(image.getPlanes()[0].getBuffer(), image.getFormat(), width, image.getPlanes()[0].getRowStride(), offset, capacity)','ImageFrame receives row stride and capacity')
+need(f,'Allocator.allocateAndCopy(capacity, in, shift)','RAW16 path copies capacity verbatim')
+need(a,'allocateAndCopy(int capacity, ByteBuffer origin, int offset)','Allocator RAW16 copy declaration')
+need(ac,'memcpy(allocation, reinterpret_cast<uint8_t*>(ptr) + offset, capacity);','Allocator RAW16 copy preserves row padding')
+need(r,'final int expectedBytes = Math.multiplyExact(pixels, 2);','renderer assumes width*height*2 bytes')
+need(c,'const jlong expectedBytes = static_cast<jlong>(pixelCount) * 2LL;','native normalizer assumes 2 bytes per logical pixel')
+print('MONO DEVICEPORT3A stride audit OK')
+print(' - frozen Photon RAW16 ImageFrame width = rowStride / pixelStride')
+print(' - frozen Photon RAW16 allocateAndCopy memcpy() preserves full plane capacity including row padding')
+print(' - Monochrom renderer then interprets ImageFrame width*height as tightly addressable 16-bit pixels')
+print(' - therefore non-tight RAW16 row stride is a real portability hazard and must be normalized before DEVICEPORT3A production')
