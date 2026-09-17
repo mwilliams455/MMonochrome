@@ -98,6 +98,7 @@ jobs:
           mkdir -p "$OUT"
           cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java" "$OUT/"
           cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java" "$OUT/"
           cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/util/Allocator.java" "$OUT/"
           cp "$ROOT/app/src/main/cpp/allocator.cpp" "$OUT/"
           cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" "$OUT/"
@@ -110,6 +111,7 @@ jobs:
             echo 'PHOTOGRAPHIC_POLICY_CHANGED=0'
           } > "$OUT/DEVICEPORT3A_AUDIT.txt"
           grep -nE 'capacity = image.getPlanes|RowStride|PixelStride|new ImageFrame' "$OUT/SaverImplementation.java" | tee "$OUT/SAVER_STRIDE_LINES.txt"
+          grep -nE 'rowStride|pixelStride|bufCapacity|new ImageFrame' "$OUT/CaptureController.java" | tee "$OUT/ZSL_STRIDE_LINES.txt"
           grep -nE 'allocateAndCopy\(|row_stride' "$OUT/ImageFrame.java" "$OUT/Allocator.java" "$OUT/allocator.cpp" | tee "$OUT/ALLOCATOR_STRIDE_LINES.txt"
           grep -nE 'expectedBytes|byteIndex' "$OUT/M9R35Renderer.java" "$OUT/m9color_jni.cpp" | tee "$OUT/RENDERER_PACKING_LINES.txt"
           sha256sum "$OUT"/* | tee "$OUT/SHA256SUMS.txt"
