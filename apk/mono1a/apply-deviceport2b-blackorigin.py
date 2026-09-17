@@ -18,6 +18,79 @@ def one(s,a,b,label):
 r,n,c=R.read_text(),N.read_text(),C.read_text()
 if 'MONO_DEVICEPORT2B_BLACK_ORIGIN' in r: raise SystemExit('DEVICEPORT2B already applied')
 
+# The pinned M9 CFA portability patch carries an M9-only closure-sharp stage in its
+# generic neutral-aware Bayer path. The successful Monochrom baseline has no such
+# helpers and its neutral MHC path is intentionally unsharpened here; Leica Standard
+# sharpness is applied later by the frozen Monochrom SHARPSTD1B stage. Strip only the
+# foreign closure helper and collapse the generic Bayer neutral path back to the
+# Monochrom RGGB semantics, generalized solely by Bayer phase/origin.
+foreign_helper=r'''inline void m9SharpSourceLeicaGreen14BayerPhase(const jshort* raw,int w,int h,std::vector<uint16_t>& dst,
+                                                int phaseX,int phaseY){
+    const size_t n=static_cast<size_t>(w)*static_cast<size_t>(h); dst.resize(n);
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x){
+        const size_t p=static_cast<size_t>(y)*static_cast<size_t>(w)+static_cast<size_t>(x);
+        const bool ey=m9PhaseEvenY(y,phaseY), ex=m9PhaseEvenX(x,phaseX); int g;
+        if(ey==ex){
+            g=(static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y-1,x))+static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y+1,x))+static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y,x-1))+static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y,x+1)))/4;
+        }else{
+            g=(4*static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y,x))+static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y-1,x-1))+static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y-1,x+1))+static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y+1,x-1))+static_cast<int>(m9SharpSourceRaw14At(raw,w,h,y+1,x+1)))/8;
+        }
+        dst[p]=static_cast<uint16_t>(g<0?0:(g>16383?16383:g));
+    }
+}
+'''
+foreign_neutral=r'''    if(neutralAware){
+        std::vector<uint16_t> greenPlane(static_cast<size_t>(pixels64));
+        for(int worker=0;worker<workerCount;++worker){
+            const int y0=(height*worker)/workerCount,y1=(height*(worker+1))/workerCount;
+            threads.emplace_back([=,&greenPlane](){for(int y=y0;y<y1;++y)for(int x=0;x<width;++x){
+                greenPlane[static_cast<size_t>(y)*static_cast<size_t>(width)+static_cast<size_t>(x)]=mhcNeutralGreenBayerPhase(raw,width,height,y,x,invR,invB,phaseX,phaseY);
+            }});
+        }
+        for(auto& thread:threads)thread.join();
+        std::vector<uint16_t> sharpSourceGreen14; m9SharpSourceLeicaGreen14BayerPhase(raw,width,height,sharpSourceGreen14,phaseX,phaseY);
+        std::vector<uint16_t> closureSharp14; m9ClosureSharpIso160Standard(sharpSourceGreen14,closureSharp14,width,height);
+        threads.clear();
+        for(int worker=0;worker<workerCount;++worker){
+            const int y0=(height*worker)/workerCount,y1=(height*(worker+1))/workerCount;
+            threads.emplace_back([=,&greenPlane,&sharpSourceGreen14,&closureSharp14](){for(int y=y0;y<y1;++y)for(int x=0;x<width;++x){
+                const size_t p=static_cast<size_t>(y)*static_cast<size_t>(width)+static_cast<size_t>(x); uint16_t* dst=out+p*3u; uint16_t base[3];
+                mhcPixelNeutralRbCompleteBayerPhase(raw,width,height,y,x,greenPlane[p],base,nr,nb,invR,invB,phaseX,phaseY);
+                if(x>=9&&x<width-9&&y>=9&&y<height-9){
+                    const int sg=static_cast<int>(closureSharp14[p]),mg=static_cast<int>(m9ClosureQ14(base[1]));
+                    const int dr=static_cast<int>(m9ClosureQ14(base[0]))-mg,db=static_cast<int>(m9ClosureQ14(base[2]))-mg;
+                    dst[0]=m9ClosureQ16(m9ClosureClamp14(sg+dr));dst[1]=m9ClosureQ16(static_cast<uint16_t>(sg));dst[2]=m9ClosureQ16(m9ClosureClamp14(sg+db));
+                }else{dst[0]=base[0];dst[1]=base[1];dst[2]=base[2];}
+            }});
+        }
+        for(auto& thread:threads)thread.join();
+    }else{'''
+mono_neutral=r'''    if(neutralAware){
+        // MONO_DEVICEPORT2B_MONOCHROM_CFA_NEUTRAL_PARITY:
+        // generalize only Bayer phase/origin. Preserve the Monochrom RGGB neutral
+        // MHC semantics exactly; do not import the M9 closure-sharp path.
+        std::vector<uint16_t> greenPlane(static_cast<size_t>(pixels64));
+        for(int worker=0;worker<workerCount;++worker){
+            const int y0=(height*worker)/workerCount,y1=(height*(worker+1))/workerCount;
+            threads.emplace_back([=,&greenPlane](){for(int y=y0;y<y1;++y)for(int x=0;x<width;++x){
+                greenPlane[static_cast<size_t>(y)*static_cast<size_t>(width)+static_cast<size_t>(x)]=mhcNeutralGreenBayerPhase(raw,width,height,y,x,invR,invB,phaseX,phaseY);
+            }});
+        }
+        for(auto& thread:threads)thread.join();
+        threads.clear();
+        for(int worker=0;worker<workerCount;++worker){
+            const int y0=(height*worker)/workerCount,y1=(height*(worker+1))/workerCount;
+            threads.emplace_back([=,&greenPlane](){for(int y=y0;y<y1;++y)for(int x=0;x<width;++x){
+                const size_t p=static_cast<size_t>(y)*static_cast<size_t>(width)+static_cast<size_t>(x);
+                uint16_t* dst=out+p*3u;
+                mhcPixelNeutralRbCompleteBayerPhase(raw,width,height,y,x,greenPlane[p],dst,nr,nb,invR,invB,phaseX,phaseY);
+            }});
+        }
+        for(auto& thread:threads)thread.join();
+    }else{'''
+c=one(c,foreign_helper,'','Monochrom removal of M9 closure helper')
+c=one(c,foreign_neutral,mono_neutral,'Monochrom generic CFA neutral parity')
+
 # Keep the frozen origin0 normalizer untouched. Add an origin-aware JNI sibling for
 # cropped RAW buffers whose local (0,0) is not sensor-grid (0,0).
 decl='''    static native long normalizeRawDirect(java.nio.ByteBuffer rawBuffer,\n                                          int pixelCount,\n                                          int width,\n                                          int height,\n                                          float[] black,\n                                          int whiteLevel,\n                                          int workers,\n                                          short[] norm16,\n                                          long[] rawCountsFlat,\n                                          long[] stats);\n'''
@@ -138,5 +211,6 @@ c=c.replace(marker,fn+marker,1)
 
 R.write_text(r);N.write_text(n);C.write_text(c)
 print('MONO_DEVICEPORT2B_BLACK_ORIGIN applied')
+print(' - Monochrom neutral MHC parity retained; M9 closure-sharp dependency removed')
 print(' - origin0 normalization remains exact legacy JNI')
 print(' - nonzero RAW origins select Camera2 2x2 black/hist planes in sensor coordinates')
