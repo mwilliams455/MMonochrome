@@ -1,0 +1,207 @@
+name: Build MMonochrome SOURCEADAPTER1A PORTABLE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/deviceport1a-m9-sourceadapter-parity
+    paths:
+      - 'apk/mono1a/**'
+      - 'docs/MONO_PHYSICAL_SENSOR_SOURCE_ADAPTER_CONTRACT.md'
+      - '.github/workflows/build-mono1a-sourceadapter1a-portable.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Verify overlay and portable patch syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C m9base rev-parse HEAD)" = "fb1db92ef78df70442b9fee879795e584f2170cf"
+          python3 -m py_compile \
+            apk/mono1a/apply-mono1a.py \
+            apk/mono1a/apply-source1d.py \
+            apk/mono1a/apply-rawscalar1a.py \
+            apk/mono1a/apply-rawscalar1b.py \
+            apk/mono1a/promote-rawscalar1b.py \
+            apk/mono1a/promote-sourceadapter1a-portable.py \
+            apk/mono1a/verify-sourceadapter1a-portable.py
+          cat > SOURCEADAPTER1A_UPSTREAM.txt <<'EOF'
+          M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf
+          MM_CURVE02_SHA256=7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752
+          SOURCE_REVISION=MONO1A_SOURCEADAPTER1A_PORTABLE
+          SOURCE_AUTHORITY=ACTIVE_PHYSICAL_CAMERA2_DNG_METADATA
+          PRIMARY_SOURCE=SOURCE1D_NATIVE_DNG_XYZ_Y
+          FIXED_XIAOMI_D65_ROLE=DIAGNOSTIC_CONTROL_ONLY
+          COBALT_SOURCE_ROLE=NONE
+          HSM_SOURCE_ROLE=NONE
+          EOF
+
+      - name: Verify frozen M9 patch syntax
+        working-directory: m9base
+        run: |
+          set -euo pipefail
+          python3 -m py_compile patches/apply-m9cam-basishsm1p-demosaicmhc1a.py
+          python3 -m py_compile patches/fix-m9cam-basishsm1p-demosaicmhc1a-lifetime1a.py
+          python3 -m py_compile patches/verify-m9cam-basishsm1p-demosaicmhc1a.py
+          python3 -m py_compile patches/apply-m9cam-basishsm1p-demosaicab1a.py
+          python3 -m py_compile patches/verify-m9cam-basishsm1p-demosaicab1a.py
+          python3 -m py_compile patches/apply-m9cam-basishsm1p-demosaicmhcneutral1a.py
+          python3 -m py_compile patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a.py
+          python3 -m py_compile patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py
+          python3 -m py_compile patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py
+
+      - name: Replay exact frozen M9 parent assembly
+        working-directory: m9base
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GITHUB_WORKSPACE="$PWD"
+          python3 - <<'PY'
+          from pathlib import Path
+          wf = Path('.github/workflows/build-m9cam-basishsm1p-curvedomain1c-upstreamaxis1a.yml')
+          lines = wf.read_text().splitlines()
+          names = ['Replay exact CURVEDOMAIN1B parent assembly','Apply CURVEDOMAIN1C UPSTREAMAXIS1A read-only extension']
+          for idx,name in enumerate(names):
+              target='      - name: '+name
+              i=lines.index(target)
+              while i<len(lines) and lines[i].strip()!='run: |': i+=1
+              if i>=len(lines): raise SystemExit('parent run block missing: '+name)
+              i+=1; out=[]
+              while i<len(lines):
+                  line=lines[i]
+                  if line.startswith('      - name:'): break
+                  if line.startswith('          '): out.append(line[10:])
+                  elif not line.strip(): out.append('')
+                  else: raise SystemExit('unexpected parent indentation: '+line)
+                  i+=1
+              Path(f'/tmp/mono_sourceadapter_parent_{idx}.sh').write_text('\n'.join(out)+'\n')
+          PY
+          for s in /tmp/mono_sourceadapter_parent_*.sh; do bash "$s"; done
+
+      - name: Apply validated frozen MHC demosaic chain
+        working-directory: m9base
+        run: |
+          set -euxo pipefail
+          ROOT="$PWD/PhotonCamera"
+          python3 patches/apply-m9cam-basishsm1p-demosaicmhc1a.py "$ROOT"
+          python3 patches/fix-m9cam-basishsm1p-demosaicmhc1a-lifetime1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhc1a.py "$ROOT"
+          python3 patches/apply-m9cam-basishsm1p-demosaicab1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicab1a.py "$ROOT"
+          python3 patches/apply-m9cam-basishsm1p-demosaicmhcneutral1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a.py "$ROOT"
+          python3 patches/promote-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
+          python3 patches/verify-m9cam-basishsm1p-demosaicmhcneutral1a-frozen1a.py "$ROOT"
+
+      - name: Apply Monochrom baseline and portable source adapter
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-mono1a.py "$ROOT"
+          python3 apk/mono1a/apply-source1d.py "$ROOT"
+          python3 apk/mono1a/apply-rawscalar1a.py "$ROOT"
+          python3 apk/mono1a/apply-rawscalar1b.py "$ROOT"
+          python3 apk/mono1a/promote-rawscalar1b.py "$ROOT"
+          python3 apk/mono1a/promote-sourceadapter1a-portable.py "$ROOT"
+          python3 apk/mono1a/verify-sourceadapter1a-portable.py "$ROOT"
+
+      - name: Verify source/target boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          R="$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java"
+          grep -n 'MONO1A_SOURCEADAPTER1A_PORTABLE' "$R"
+          grep -n 'monochromPrimarySource.*SOURCE1D_NATIVE_DNG_XYZ_Y' "$R"
+          grep -n 'monochromSourceManufacturerIndependent.*true' "$R"
+          grep -n 'monochromSourceCobaltRuntimeDependency.*false' "$R"
+          grep -n 'monochromSourceHsmRuntimeDependency.*false' "$R"
+          grep -n 'rawScalar1B.put("photographicOutputSelected", false)' "$R"
+          grep -n 'source1dXyzY.put("photographicOutputSelected", true)' "$R"
+          grep -n 'curve02Sha256.*7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752' "$R"
+          ! grep -q 'monochromPrimarySource.*RAWSCALAR1B_FIXED_D65' "$R"
+
+      - name: Snapshot assembled source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          mkdir -p sourceadapter1a-assembled-source
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" sourceadapter1a-assembled-source/
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java" sourceadapter1a-assembled-source/
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" sourceadapter1a-assembled-source/
+          cp SOURCEADAPTER1A_UPSTREAM.txt sourceadapter1a-assembled-source/
+          sha256sum sourceadapter1a-assembled-source/* | tee sourceadapter1a-assembled-source/SHA256SUMS.txt
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Build SOURCEADAPTER1A debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/SOURCEADAPTER1A_GRADLE.log"
+
+      - name: Record APK SHA256
+        if: success()
+        run: sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee SOURCEADAPTER1A_APK_SHA256.txt
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-SOURCEADAPTER1A-BUILDLOG
+          path: SOURCEADAPTER1A_GRADLE.log
+          if-no-files-found: ignore
+
+      - name: Upload assembled source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-SOURCEADAPTER1A-ASSEMBLED-SOURCE
+          path: sourceadapter1a-assembled-source/
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-SOURCEADAPTER1A-PORTABLE
+          path: |
+            m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
+            SOURCEADAPTER1A_APK_SHA256.txt
+            SOURCEADAPTER1A_UPSTREAM.txt
+          if-no-files-found: error
