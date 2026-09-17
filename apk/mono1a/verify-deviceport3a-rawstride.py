@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEVICEPORT3A production verifier; touching this file also triggers the registered build workflow.
 from pathlib import Path
 import sys
 if len(sys.argv) != 2: raise SystemExit('usage: verify-deviceport3a-rawstride.py <PhotonCamera-root>')
