@@ -262,3 +262,5 @@ print(" - non-ZSL intended ISO*shutter is represented in linear display space")
 print(" - OES is converted to linear Rec.709 luminance and shown monochrome")
 print(" - no guessed still-tone curve is applied yet")
 print(" - capture allocator, SOURCE1D, RAW/JPEG renderer and DEVICEPORT3A are untouched")
+
+# CI_TRIGGER_MONOLIVEGL1A
