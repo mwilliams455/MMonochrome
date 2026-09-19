@@ -10,7 +10,10 @@ iso_path=root/"app/src/main/java/com/particlesdevs/photoncamera/processing/param
 cc_path=root/"app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java"
 for p in (fs,rr_path,iso_path,cc_path):
     if not p.exists(): raise SystemExit("missing "+str(p))
-s=fs.read_text()\nrr=rr_path.read_text()\niso=iso_path.read_text()\ncc=cc_path.read_text()
+s=fs.read_text()
+rr=rr_path.read_text()
+iso=iso_path.read_text()
+cc=cc_path.read_text()
 checks=[
  ("GL1A retained","MONOLIVEGL1A_DISPLAYMONO1A" in s),
  ("GL1B marker","MONOLIVEGL1B_PAIRFIT1A" in s),
