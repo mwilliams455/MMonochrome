@@ -286,8 +286,6 @@ jobs:
           cp /tmp/monolivegl1e_visual_after.sha256 "$OUT/MONOLIVEGL1E_VISUAL_AFTER.sha256"
           cp /tmp/monolivegl1e_still_before.sha256 "$OUT/MONOLIVEGL1E_STILL_BEFORE.sha256"
           cp /tmp/monolivegl1e_still_after.sha256 "$OUT/MONOLIVEGL1E_STILL_AFTER.sha256"
-          cp /tmp/monolivegl1a_still_before.sha256 "$OUT/MONOLIVEGL1A_STILL_BEFORE.sha256"
-          cp /tmp/monolivegl1a_still_after.sha256 "$OUT/MONOLIVEGL1A_STILL_AFTER.sha256"
           cp DEVICEPORT3A_UPSTREAM.txt "$OUT/"
           cp /tmp/deviceport3a_renderer_before.sha256 "$OUT/RENDERER_BEFORE.sha256"
           cp /tmp/deviceport3a_renderer_after.sha256 "$OUT/RENDERER_AFTER.sha256"
