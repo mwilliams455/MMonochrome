@@ -235,21 +235,6 @@ jobs:
           diff -u /tmp/monolivegl1e_visual_before.sha256 /tmp/monolivegl1e_visual_after.sha256
           diff -u /tmp/monolivegl1e_still_before.sha256 /tmp/monolivegl1e_still_after.sha256
 
-      - name: Prove authoritative still path unchanged by preview
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
-          sha256sum \
-            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
-            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
-            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java" \
-            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java" \
-            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java" \
-            > /tmp/monolivegl1a_still_after.sha256
-          diff -u /tmp/monolivegl1a_still_before.sha256 /tmp/monolivegl1a_still_after.sha256
-          cat /tmp/monolivegl1a_still_after.sha256
-
       - name: Record DEVICEPORT3A provenance
         shell: bash
         run: |
@@ -267,6 +252,10 @@ jobs:
           PHOTOGRAPHIC_POLICY_CHANGED=0
           COBALT_SOURCE_ROLE=NONE
           HSM_SOURCE_ROLE=NONE
+          MONOLIVEGL1E_DIAGNOSTIC_ONLY=1
+          MONOLIVEGL1D_VISUAL_CHANGED=0
+          MONOLIVEGL1E_STILL_RENDERER_CHANGED=0
+          MONOLIVEGL1E_CAPTURE_CONTROLLER_ROLE=PASSIVE_PREVIEW_CAPTURE_PAIR_SIDECAR
           EOF
 
       - name: Snapshot MONOLIVEGL1E assembled source
