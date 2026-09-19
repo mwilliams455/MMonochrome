@@ -1,0 +1,186 @@
+name: Audit MMonochrome MONOLIVEGL1A Preview Baseline
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/monolivegl1a-preview-audit
+    paths:
+      - 'apk/mono1a/apply-deviceport3a-rawstride.py'
+      - 'apk/mono1a/verify-deviceport3a-rawstride.py'
+      - '.github/workflows/audit-mono1a-livepreview1a.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout pinned M9 portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Verify DEVICEPORT3A patch syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/apply-deviceport3a-rawstride.py apk/mono1a/verify-deviceport3a-rawstride.py
+
+      - name: Replay sealed DEVICEPORT2B assembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          wf=Path('.github/workflows/build-mono1a-deviceport2b-currentbaseline.yml')
+          lines=wf.read_text().splitlines()
+          names=[
+              ('Verify inputs','.'),
+              ('Verify frozen M9 patch syntax','m9base'),
+              ('Replay exact frozen M9 parent assembly','m9base'),
+              ('Apply validated frozen MHC chain','m9base'),
+              ('Apply RAWSCALAR1B base','.'),
+              ('Generate canonical Standard sharpness LUT','.'),
+              ('Apply SHARPSTD1B and MANUALISO1B','.'),
+              ('Apply portable CFA geometry and black-plane origin','.'),
+              ('Verify latest functional baseline plus portability','.'),
+          ]
+          for idx,(name,cwd) in enumerate(names):
+              target='      - name: '+name
+              try:
+                  i=lines.index(target)
+              except ValueError:
+                  raise SystemExit('sealed DEVICEPORT2B step missing: '+name)
+              while i<len(lines) and lines[i].strip()!='run: |': i+=1
+              if i>=len(lines): raise SystemExit('run block missing: '+name)
+              i+=1; out=[]
+              while i<len(lines):
+                  line=lines[i]
+                  if line.startswith('      - name:'): break
+                  if line.startswith('          '): out.append(line[10:])
+                  elif not line.strip(): out.append('')
+                  else: raise SystemExit('unexpected indentation in '+name+': '+line)
+                  i+=1
+              p=Path(f'/tmp/deviceport3a_parent_{idx:02d}.sh')
+              p.write_text('\n'.join(out)+'\n')
+          Path('/tmp/deviceport3a_parent.tsv').write_text('\n'.join(
+              f'/tmp/deviceport3a_parent_{i:02d}.sh\t{cwd}\t{name}'
+              for i,(name,cwd) in enumerate(names))+'\n')
+          PY
+          while IFS=$'\t' read -r script cwd name; do
+            echo "===== DEVICEPORT3A parent replay: $name ====="
+            if [ "$cwd" = "m9base" ]; then
+              (cd m9base && GITHUB_WORKSPACE="$GITHUB_WORKSPACE/m9base" bash "$script")
+            else
+              bash "$script"
+            fi
+          done < /tmp/deviceport3a_parent.tsv
+
+      - name: Freeze downstream renderer hashes before stride patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          sha256sum \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
+            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
+            > /tmp/deviceport3a_renderer_before.sha256
+          cat /tmp/deviceport3a_renderer_before.sha256
+
+      - name: Apply DEVICEPORT3A RAW stride packer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-deviceport3a-rawstride.py "$ROOT"
+          python3 apk/mono1a/verify-deviceport3a-rawstride.py "$ROOT"
+
+      - name: Prove renderer and native photographic path unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          sha256sum \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
+            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
+            > /tmp/deviceport3a_renderer_after.sha256
+          diff -u /tmp/deviceport3a_renderer_before.sha256 /tmp/deviceport3a_renderer_after.sha256
+          cat /tmp/deviceport3a_renderer_after.sha256
+
+      - name: Record DEVICEPORT3A provenance
+        shell: bash
+        run: |
+          cat > DEVICEPORT3A_UPSTREAM.txt <<'EOF'
+          DEVICEPORT2B_PARENT=ee5af16484a54539b5d9018f1ad186f423e1616e
+          M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf
+          M9_PORTABILITY_TOOLS=57476072a146d53da11235667f9681e64427c9cf
+          FUNCTIONAL_BASELINE=SHARPSTD1B_ISOBRIDGEAB1A_MANUALISO1B
+          PRIMARY_SOURCE=SOURCE1D_NATIVE_DNG_XYZ_Y
+          DEVICEPORT2B_BLACK_LEVEL_PLANES=SENSOR_GRID_2X2_ORIGIN_AWARE
+          DEVICEPORT3A_RAW16_WIDTH=ANDROID_IMAGE_LOGICAL_WIDTH
+          DEVICEPORT3A_TIGHT_RAW16=EXACT_LEGACY_ALLOCATE_AND_COPY
+          DEVICEPORT3A_PADDED_RAW16=ONE_TIME_CAPTURE_BOUNDARY_DESTRIDE
+          RENDERER_ROW_STRIDE_DEPENDENCY=NONE
+          PHOTOGRAPHIC_POLICY_CHANGED=0
+          COBALT_SOURCE_ROLE=NONE
+          HSM_SOURCE_ROLE=NONE
+          EOF
+
+      - name: Snapshot exact preview baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT=monolivegl1a-preview-audit
+          mkdir -p "$OUT"
+          files=(
+            "app/src/main/java/com/particlesdevs/photoncamera/ui/camera/CameraFragment.java"
+            "app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/GLPreview.java"
+            "app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/MainRenderer.java"
+            "app/src/main/assets/shaders/preview/main_fs.glsl"
+            "app/src/main/res/layout/layout_main_viewfinder.xml"
+            "app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java"
+            "app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java"
+            "app/src/main/java/com/particlesdevs/photoncamera/m9/M9SubjectMotionAnalyzer.java"
+          )
+          for rel in "${files[@]}"; do
+            p="$ROOT/$rel"
+            if [ ! -f "$p" ]; then
+              echo "MISSING $rel" >&2
+              exit 1
+            fi
+            cp "$p" "$OUT/$(basename "$p")"
+          done
+          cat > "$OUT/MONOLIVEGL1A_AUDIT.txt" <<'EOF'
+          MONOLIVEGL1A_AUDIT=EXACT_DEVICEPORT3A_ASSEMBLY
+          DEVICEPORT3A_PARENT=32658cddf7b154b6fbd29814250c2c6aa1887822
+          STILL_RENDERER_MUTATION=NONE
+          OBJECTIVE=FAST_PHOTON_OES_DISPLAY_DOMAIN_MONOCHROM_PREVIEW
+          EOF
+          sha256sum "$OUT"/* | tee "$OUT/SHA256SUMS.txt"
+          grep -nE "class GLPreview|new MainRenderer|GenerateExpoPair|SENSOR_EXPOSURE_TIME|SENSOR_SENSITIVITY|samplerExternalOES|texture\(sTexture|M9LIVE|MONO" "$OUT"/* || true
+
+      - name: Upload preview audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL1A-PREVIEW-AUDIT
+          path: monolivegl1a-preview-audit/
+          if-no-files-found: error
