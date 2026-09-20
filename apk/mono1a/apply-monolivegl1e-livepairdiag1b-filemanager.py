@@ -57,3 +57,5 @@ print(" - diagnostic JSON uses FileManager.sDCIM_CAMERA")
 print(" - writer uses java.nio.file.Files.write like existing sidecars")
 print(" - preview visual transform unchanged")
 print(" - still renderer/capture exposure policy unchanged")
+
+# CI_TRIGGER_GL1E1B
