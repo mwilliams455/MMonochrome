@@ -1,0 +1,175 @@
+name: Build MMonochrome MONOLIVEGL2A Controlled OES
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/monolivegl2a-controlledoes]
+    paths:
+      - 'apk/mono1a/monolivegl2a/**'
+      - '.github/workflows/build-mono1a-monolivegl2a.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mono-livegl2a-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Checkout frozen Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+      - name: Checkout pinned portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Replay sealed GL1E1D source and storage tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/monolivegl2a/*.py
+          python3 -u - <<'PY' | tee MONOLIVEGL2A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monolivegl1e-livepairdiag1d-spool.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0; name=''
+          while i<stop:
+              line=lines[i]
+              if line.startswith('      - name: '): name=line.split(': ',1)[1]
+              if line.strip()!='run: |': i+=1; continue
+              i+=1; block=[]
+              while i<stop:
+                  line=lines[i]
+                  if line.startswith('      - name: '): break
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent command boundary: '+line)
+                  i+=1
+              count+=1
+              script=Path('/tmp/mono2a-parent-%02d.sh'%count)
+              script.write_text('\n'.join(block)+'\n')
+              print('SEALED PARENT: '+name,flush=True)
+              subprocess.run(['bash',str(script)],check=True)
+          assert count==4,count
+          print('GL1E1D full assembly replay PASS')
+          PY
+      - name: Apply controlled source and Monochrom GPU target
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 apk/mono1a/monolivegl2a/apply.py "$GITHUB_WORKSPACE/m9base/PhotonCamera" | tee MONOLIVEGL2A_APPLY.txt
+      - name: Test inverse math and immutable frame association
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/monolivegl2a/test_math.py "$ROOT" | tee MONOLIVEGL2A_MATH.txt
+          python3 apk/mono1a/monolivegl2a/test_state.py "$ROOT" | tee MONOLIVEGL2A_STATE.txt
+      - name: Execute shader against frozen native SOURCE1D
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1-mesa-dev libgl1-mesa-dri python3-numpy
+          /usr/bin/python3 apk/mono1a/monolivegl2a/test_gpu.py "$GITHUB_WORKSPACE/m9base/PhotonCamera" | tee MONOLIVEGL2A_GPU.json
+      - name: Snapshot assembled source and inspection dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT=monolivegl2a-evidence
+          mkdir -p "$OUT"
+          cp -a monolivegl1e1d-assembled-source/. "$OUT/"
+          python3 - <<'PY'
+          import json,shutil
+          from pathlib import Path
+          root=Path('m9base/PhotonCamera'); out=Path('monolivegl2a-evidence')
+          proof=json.loads((root/'MONOLIVEGL2A_ISOLATION.json').read_text())
+          for rel in set(proof['changed'])|set(proof['frozen']): shutil.copyfile(root/rel,out/Path(rel).name)
+          for name in ['MonoPreviewMath2A.java','MonoGpuPreview2A.java','Camera2ApiAutoFix.java','VendorTagUtils.java']:
+              paths=list((root/'app/src/main').rglob(name))
+              for p in paths: shutil.copyfile(p,out/p.name)
+          shutil.copyfile(root/'MONOLIVEGL2A_ISOLATION.json',out/'MONOLIVEGL2A_ISOLATION.json')
+          shutil.copyfile(root/'app/build.gradle',out/'app-build.gradle')
+          shutil.copyfile(root/'app/src/main/assets/mono/mono_curve02_gl2a.bin',out/'mono_curve02_gl2a.bin')
+          for p in Path('apk/mono1a/monolivegl2a').iterdir():
+              if p.is_file(): shutil.copyfile(p,out/('overlay-'+p.name))
+          PY
+          printf 'BUILD_MARKER=MONOLIVEGL2A_CONTROLLEDOES\nCOMMIT=%s\nSTILL_RENDER_ARITHMETIC_CHANGED=0\nPREVIEW_INPUT_CHANGED=1\nAUTO_INPUT_STATISTICS_MAY_CHANGE=1\nDEVICE_PIXEL_PARITY_VALIDATED=0\n' "$GITHUB_SHA" > "$OUT/MONOLIVEGL2A_PROVENANCE.txt"
+          find "$OUT" -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > "$OUT/SHA256SUMS.txt"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+      - name: Build MONOLIVEGL2A APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOLIVEGL2A_GRADLE.log"
+      - name: Verify packaged shader curve and diagnostic markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MONOLIVEGL2A_APK_PROOF.txt
+          from pathlib import Path
+          import zipfile,hashlib,shutil
+          root=Path('m9base/PhotonCamera')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk')); assert len(apks)==1
+          apk=apks[0]
+          with zipfile.ZipFile(apk) as z:
+              for rel in ['assets/shaders/preview/main_fs.glsl','assets/mono/mono_curve02_gl2a.bin']:
+                  assert z.read(rel)==(root/'app/src/main'/rel).read_bytes(),rel
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [b'MONOLIVEGL2A_CONTROLLEDOES',b'previewSource2A',b'pairedProbe',b'controlled_curve_not_reported',b'exposure_only_monochrome_OES_fallback',b'rgba8Base64']:
+                  assert marker in dex,marker
+          out=Path('MMonochrome_MONOLIVEGL2A_CONTROLLEDOES.apk');shutil.copyfile(apk,out)
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MONOLIVEGL2A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS exact packaged shader and Monochrom curve; new diagnostic/fallback markers')
+          print(digest,out.stat().st_size)
+          PY
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL2A-EVIDENCE
+          path: |
+            MONOLIVEGL2A_*.log
+            MONOLIVEGL2A_*.txt
+            MONOLIVEGL2A_GPU.json
+            monolivegl2a-evidence/
+          if-no-files-found: warn
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL2A-CONTROLLEDOES
+          path: |
+            MMonochrome_MONOLIVEGL2A_CONTROLLEDOES.apk
+            MONOLIVEGL2A_APK_SHA256.txt
+            MONOLIVEGL2A_APK_PROOF.txt
+            monolivegl2a-evidence/MONOLIVEGL2A_PROVENANCE.txt
+          if-no-files-found: error
