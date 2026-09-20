@@ -24,7 +24,8 @@ checks=[
  ("ZSL snapshot before ring","c.find('monoZslSnapshot1E') < c.find('List<Image> rawImages;')"),
  ("ZSL writer","MonoLivePairDiagnostics1E.writeCompleted(\n                    monoZslSnapshot1E, monoZslRequest1E, monoZslResult1E" in c),
  ("non-ZSL writer retained","monoLivePairPreviewSnapshot1E, request, result" in c),
- ("writer accepts CaptureResult","CaptureResult result, String physicalCameraId" in d),\n ("FileManager writer retained","FileManager.sDCIM_CAMERA.getAbsolutePath()" in d),
+ ("writer accepts CaptureResult","CaptureResult result, String physicalCameraId" in d),
+ ("FileManager writer retained","FileManager.sDCIM_CAMERA.getAbsolutePath()" in d),
 ]
 for label,ok in checks:
     print(("OK   " if ok else "FAIL ")+label)
