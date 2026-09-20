@@ -87,7 +87,7 @@ public final class Export1DHostTest {
   .put("raw",new JSONObject().put("timestampNs",ts).put("width",4096).put("height",3072))
   .put("captureRequest",new JSONObject().put("iso",50).put("exposureTimeNs",10400000))
   .put("captureResult",new JSONObject().put("iso",50).put("exposureTimeNs",10400000))
-  .put("photonExposureDecision",new JSONObject().put("preview",new JSONObject().put("iso",52).put("shutterNs",10000000).put("mode","PHOTO")));}
+  .put("photonExposureDecision",new JSONObject().put("preview",new JSONObject().put("iso",52).put("shutterNs",10000000).put("mode",mode)));}
  private static JSONObject pair(long ts,String camera,boolean preview){JSONObject p=new JSONObject().put("cameraId",camera)
   .put("captureResult",new JSONObject().put("sensorTimestampNs",ts));
   if(preview)p.put("previewExposureAuthority",new JSONObject().put("previewResultIso",52).put("previewResultExposureTimeNs",10000000));
@@ -98,12 +98,12 @@ public final class Export1DHostTest {
  private static JSONObject attach(JSONObject c){return parse(MonoLivePairExport1D.attachAndStage(PATH,bytes(c)));}
  public static void main(String[] args)throws Exception {
   JSONObject c=capture(1,"2","PHOTO");MonoLivePairExport1D.remember(pair(1,"2",true));JSONObject enriched=attach(c);JSONObject p=enriched.getJSONObject("monoLivePair");
-  ok(p.getBoolean("validExposurePair")&&p.getBoolean("sidecarPrivateStaged"),"exact Photo match and private stage");
+  ok(p.getBoolean("validExposurePair")&&p.getBoolean("sidecarPrivateStaged")&&p.getString("captureMode").equals("PHOTO"),"exact Photo match and private stage");
   ok(M9DiagnosticBurstSpool.pairPath.equals(PATH.resolveSibling("IMG_TEST_00_MONO_LIVEPAIR.json")),"same stem and proven Raw folder");
   enriched.remove("monoLivePair");ok(enriched.similar(c),"original capture metadata preserved semantically");
   ok(!p.getBoolean("displayToneParityProven")&&!p.getBoolean("displayPixelsSampled"),"no unsupported display parity claim");
   p=attach(capture(2,"2","MOTION")).getJSONObject("monoLivePair");
-  ok(p.getString("status").equals("unavailable_no_exact_callback_match")&&!p.getBoolean("validExposurePair")&&p.getBoolean("sidecarPrivateStaged"),"Motion missing callback still exports explicit record");
+  ok(p.getString("captureMode").equals("MOTION")&&p.getString("status").equals("unavailable_no_exact_callback_match")&&!p.getBoolean("validExposurePair")&&p.getBoolean("sidecarPrivateStaged"),"Motion missing callback still exports explicit record");
   MonoLivePairExport1D.remember(pair(3,"0",true));p=attach(capture(3,"2","PHOTO")).getJSONObject("monoLivePair");ok(!p.getBoolean("completedCallbackMatchedRawTimestamp"),"different camera cannot match");
   p=attach(capture(3,"0","PHOTO")).getJSONObject("monoLivePair");ok(p.getBoolean("validExposurePair"),"unrelated camera entry not consumed");
   MonoLivePairExport1D.remember(pair(4,"2",true));p=attach(capture(5,"2","PHOTO")).getJSONObject("monoLivePair");ok(!p.getBoolean("completedCallbackMatchedRawTimestamp"),"different timestamp cannot match");
