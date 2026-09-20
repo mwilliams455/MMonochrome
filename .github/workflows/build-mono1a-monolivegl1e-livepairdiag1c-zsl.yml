@@ -1,0 +1,373 @@
+name: Build MMonochrome MONOLIVEGL1E Live Pair Diagnostics 1C ZSL
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/monolivegl1e-livepairdiag1c-zsl
+    paths:
+      - 'apk/mono1a/apply-deviceport3a-rawstride.py'
+      - 'apk/mono1a/verify-deviceport3a-rawstride.py'
+      - 'apk/mono1a/apply-monolivegl1a-displaymono1a.py'
+      - 'apk/mono1a/verify-monolivegl1a-displaymono1a.py'
+      - 'apk/mono1a/apply-monolivegl1b-pairfit1a.py'
+      - 'apk/mono1a/verify-monolivegl1b-pairfit1a.py'
+      - 'apk/mono1a/apply-monolivegl1c-dualpair1a.py'
+      - 'apk/mono1a/verify-monolivegl1c-dualpair1a.py'
+      - 'apk/mono1a/apply-monolivegl1d-tripair1a.py'
+      - 'apk/mono1a/verify-monolivegl1d-tripair1a.py'
+      - 'apk/mono1a/apply-monolivegl1e-livepairdiag1a.py'
+      - 'apk/mono1a/verify-monolivegl1e-livepairdiag1a.py'
+      - 'apk/mono1a/apply-monolivegl1e-livepairdiag1b-filemanager.py'
+      - 'apk/mono1a/verify-monolivegl1e-livepairdiag1b-filemanager.py'
+      - 'apk/mono1a/apply-monolivegl1e-livepairdiag1c-zsl.py'
+      - 'apk/mono1a/verify-monolivegl1e-livepairdiag1c-zsl.py'
+      - '.github/workflows/build-mono1a-monolivegl1e-livepairdiag1c-zsl.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout pinned M9 portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Verify DEVICEPORT3A and MONOLIVEGL1A patch syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            apk/mono1a/apply-deviceport3a-rawstride.py \
+            apk/mono1a/verify-deviceport3a-rawstride.py \
+            apk/mono1a/apply-monolivegl1a-displaymono1a.py \
+            apk/mono1a/verify-monolivegl1a-displaymono1a.py \
+            apk/mono1a/apply-monolivegl1b-pairfit1a.py \
+            apk/mono1a/verify-monolivegl1b-pairfit1a.py \
+            apk/mono1a/apply-monolivegl1c-dualpair1a.py \
+            apk/mono1a/verify-monolivegl1c-dualpair1a.py \
+            apk/mono1a/apply-monolivegl1d-tripair1a.py \
+            apk/mono1a/verify-monolivegl1d-tripair1a.py \
+            apk/mono1a/apply-monolivegl1e-livepairdiag1a.py \
+            apk/mono1a/verify-monolivegl1e-livepairdiag1a.py \
+            apk/mono1a/apply-monolivegl1e-livepairdiag1b-filemanager.py \
+            apk/mono1a/verify-monolivegl1e-livepairdiag1b-filemanager.py \
+            apk/mono1a/apply-monolivegl1e-livepairdiag1c-zsl.py \
+            apk/mono1a/verify-monolivegl1e-livepairdiag1c-zsl.py
+
+      - name: Replay sealed DEVICEPORT2B assembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          wf=Path('.github/workflows/build-mono1a-deviceport2b-currentbaseline.yml')
+          lines=wf.read_text().splitlines()
+          names=[
+              ('Verify inputs','.'),
+              ('Verify frozen M9 patch syntax','m9base'),
+              ('Replay exact frozen M9 parent assembly','m9base'),
+              ('Apply validated frozen MHC chain','m9base'),
+              ('Apply RAWSCALAR1B base','.'),
+              ('Generate canonical Standard sharpness LUT','.'),
+              ('Apply SHARPSTD1B and MANUALISO1B','.'),
+              ('Apply portable CFA geometry and black-plane origin','.'),
+              ('Verify latest functional baseline plus portability','.'),
+          ]
+          for idx,(name,cwd) in enumerate(names):
+              target='      - name: '+name
+              try:
+                  i=lines.index(target)
+              except ValueError:
+                  raise SystemExit('sealed DEVICEPORT2B step missing: '+name)
+              while i<len(lines) and lines[i].strip()!='run: |': i+=1
+              if i>=len(lines): raise SystemExit('run block missing: '+name)
+              i+=1; out=[]
+              while i<len(lines):
+                  line=lines[i]
+                  if line.startswith('      - name:'): break
+                  if line.startswith('          '): out.append(line[10:])
+                  elif not line.strip(): out.append('')
+                  else: raise SystemExit('unexpected indentation in '+name+': '+line)
+                  i+=1
+              p=Path(f'/tmp/deviceport3a_parent_{idx:02d}.sh')
+              p.write_text('\n'.join(out)+'\n')
+          Path('/tmp/deviceport3a_parent.tsv').write_text('\n'.join(
+              f'/tmp/deviceport3a_parent_{i:02d}.sh\t{cwd}\t{name}'
+              for i,(name,cwd) in enumerate(names))+'\n')
+          PY
+          while IFS=$'\t' read -r script cwd name; do
+            echo "===== DEVICEPORT3A parent replay: $name ====="
+            if [ "$cwd" = "m9base" ]; then
+              (cd m9base && GITHUB_WORKSPACE="$GITHUB_WORKSPACE/m9base" bash "$script")
+            else
+              bash "$script"
+            fi
+          done < /tmp/deviceport3a_parent.tsv
+
+      - name: Freeze downstream renderer hashes before stride patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          sha256sum \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
+            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
+            > /tmp/deviceport3a_renderer_before.sha256
+          cat /tmp/deviceport3a_renderer_before.sha256
+
+      - name: Apply DEVICEPORT3A RAW stride packer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-deviceport3a-rawstride.py "$ROOT"
+          python3 apk/mono1a/verify-deviceport3a-rawstride.py "$ROOT"
+
+      - name: Prove renderer and native photographic path unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          sha256sum \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
+            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
+            > /tmp/deviceport3a_renderer_after.sha256
+          diff -u /tmp/deviceport3a_renderer_before.sha256 /tmp/deviceport3a_renderer_after.sha256
+          cat /tmp/deviceport3a_renderer_after.sha256
+
+      - name: Freeze authoritative still path before MONOLIVEGL1A
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          sha256sum \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
+            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java" \
+            > /tmp/monolivegl1a_still_before.sha256
+          cat /tmp/monolivegl1a_still_before.sha256
+
+      - name: Apply MONOLIVEGL1A display-domain monochrome preview
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1a-displaymono1a.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1a-displaymono1a.py "$ROOT" | tee MONOLIVEGL1A_VERIFY.txt
+
+      - name: Apply MONOLIVEGL1B paired residual tone
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1b-pairfit1a.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1b-pairfit1a.py "$ROOT" | tee MONOLIVEGL1B_VERIFY.txt
+
+      - name: Apply MONOLIVEGL1C dual-pair generalized residual
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1c-dualpair1a.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1c-dualpair1a.py "$ROOT" | tee MONOLIVEGL1C_VERIFY.txt
+
+      - name: Apply MONOLIVEGL1D three-pair generalized residual
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1d-tripair1a.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1d-tripair1a.py "$ROOT" | tee MONOLIVEGL1D_VERIFY.txt
+
+      - name: Freeze GL1D visual and still contracts before GL1E
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          sha256sum \
+            "$ROOT/app/src/main/assets/shaders/preview/main_fs.glsl" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/MainRenderer.java" \
+            > /tmp/monolivegl1e_visual_before.sha256
+          sha256sum \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
+            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java" \
+            > /tmp/monolivegl1e_still_before.sha256
+
+      - name: Apply MONOLIVEGL1E shutter-time live-pair diagnostics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1e-livepairdiag1a.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1e-livepairdiag1a.py "$ROOT" | tee MONOLIVEGL1E_VERIFY.txt
+
+      - name: Apply MONOLIVEGL1E FileManager sidecar persistence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1e-livepairdiag1b-filemanager.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1e-livepairdiag1b-filemanager.py "$ROOT" | tee MONOLIVEGL1E_1B_VERIFY.txt
+
+      - name: Apply MONOLIVEGL1E Motion ZSL sidecar hook
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1e-livepairdiag1c-zsl.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1e-livepairdiag1c-zsl.py "$ROOT" | tee MONOLIVEGL1E_1C_VERIFY.txt
+
+      - name: Prove GL1D visual and still contracts unchanged by diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          sha256sum \
+            "$ROOT/app/src/main/assets/shaders/preview/main_fs.glsl" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/MainRenderer.java" \
+            > /tmp/monolivegl1e_visual_after.sha256
+          sha256sum \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" \
+            "$ROOT/app/src/main/cpp/m9color_jni.cpp" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java" \
+            "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java" \
+            > /tmp/monolivegl1e_still_after.sha256
+          diff -u /tmp/monolivegl1e_visual_before.sha256 /tmp/monolivegl1e_visual_after.sha256
+          diff -u /tmp/monolivegl1e_still_before.sha256 /tmp/monolivegl1e_still_after.sha256
+
+      - name: Record DEVICEPORT3A provenance
+        shell: bash
+        run: |
+          cat > DEVICEPORT3A_UPSTREAM.txt <<'EOF'
+          DEVICEPORT2B_PARENT=ee5af16484a54539b5d9018f1ad186f423e1616e
+          M9_ANDROID_BASE=fb1db92ef78df70442b9fee879795e584f2170cf
+          M9_PORTABILITY_TOOLS=57476072a146d53da11235667f9681e64427c9cf
+          FUNCTIONAL_BASELINE=SHARPSTD1B_ISOBRIDGEAB1A_MANUALISO1B
+          PRIMARY_SOURCE=SOURCE1D_NATIVE_DNG_XYZ_Y
+          DEVICEPORT2B_BLACK_LEVEL_PLANES=SENSOR_GRID_2X2_ORIGIN_AWARE
+          DEVICEPORT3A_RAW16_WIDTH=ANDROID_IMAGE_LOGICAL_WIDTH
+          DEVICEPORT3A_TIGHT_RAW16=EXACT_LEGACY_ALLOCATE_AND_COPY
+          DEVICEPORT3A_PADDED_RAW16=ONE_TIME_CAPTURE_BOUNDARY_DESTRIDE
+          RENDERER_ROW_STRIDE_DEPENDENCY=NONE
+          PHOTOGRAPHIC_POLICY_CHANGED=0
+          COBALT_SOURCE_ROLE=NONE
+          HSM_SOURCE_ROLE=NONE
+          MONOLIVEGL1E_DIAGNOSTIC_ONLY=1
+          MONOLIVEGL1D_VISUAL_CHANGED=0
+          MONOLIVEGL1E_STILL_RENDERER_CHANGED=0
+          MONOLIVEGL1E_CAPTURE_CONTROLLER_ROLE=PASSIVE_PREVIEW_CAPTURE_PAIR_SIDECAR
+          EOF
+
+      - name: Snapshot MONOLIVEGL1E 1C assembled source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT=monolivegl1e1c-assembled-source
+          mkdir -p "$OUT"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/util/Allocator.java" "$OUT/"
+          cp "$ROOT/app/src/main/cpp/allocator.cpp" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java" "$OUT/"
+          cp "$ROOT/app/src/main/cpp/m9color_jni.cpp" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/CameraFragment.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/GLPreview.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/MainRenderer.java" "$OUT/"
+          cp "$ROOT/app/src/main/assets/shaders/preview/main_fs.glsl" "$OUT/"
+          cp MONOLIVEGL1A_VERIFY.txt "$OUT/"
+          cp MONOLIVEGL1B_VERIFY.txt "$OUT/"
+          cp MONOLIVEGL1C_VERIFY.txt "$OUT/"
+          cp MONOLIVEGL1D_VERIFY.txt "$OUT/"
+          cp MONOLIVEGL1E_VERIFY.txt "$OUT/"
+          cp MONOLIVEGL1E_1B_VERIFY.txt "$OUT/"
+          cp MONOLIVEGL1E_1C_VERIFY.txt "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoLivePairDiagnostics1E.java" "$OUT/"
+          cp /tmp/monolivegl1e_visual_before.sha256 "$OUT/MONOLIVEGL1E_VISUAL_BEFORE.sha256"
+          cp /tmp/monolivegl1e_visual_after.sha256 "$OUT/MONOLIVEGL1E_VISUAL_AFTER.sha256"
+          cp /tmp/monolivegl1e_still_before.sha256 "$OUT/MONOLIVEGL1E_STILL_BEFORE.sha256"
+          cp /tmp/monolivegl1e_still_after.sha256 "$OUT/MONOLIVEGL1E_STILL_AFTER.sha256"
+          cp DEVICEPORT3A_UPSTREAM.txt "$OUT/"
+          cp /tmp/deviceport3a_renderer_before.sha256 "$OUT/RENDERER_BEFORE.sha256"
+          cp /tmp/deviceport3a_renderer_after.sha256 "$OUT/RENDERER_AFTER.sha256"
+          sha256sum "$OUT"/* | tee "$OUT/SHA256SUMS.txt"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Build MONOLIVEGL1E 1C debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOLIVEGL1E1C_GRADLE.log"
+
+      - name: Record APK SHA256
+        if: success()
+        run: sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee MONOLIVEGL1E1C_APK_SHA256.txt
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL1E1C-BUILDLOG
+          path: MONOLIVEGL1E1C_GRADLE.log
+          if-no-files-found: ignore
+
+      - name: Upload assembled source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL1E1C-ASSEMBLED-SOURCE
+          path: monolivegl1e1c-assembled-source/
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL1E-LIVEPAIRDIAG1C-ZSL
+          path: |
+            m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
+            MONOLIVEGL1E1C_APK_SHA256.txt
+            DEVICEPORT3A_UPSTREAM.txt
+          if-no-files-found: error
