@@ -72,7 +72,7 @@ insert = '''        mZslCapturing = true;
                 ? monoZslSelector1E.iso : -1;
         final long monoZslSelectorExposureNs1E = monoZslSelector1E != null
                 ? monoZslSelector1E.exposure : -1L;
-        final TotalCaptureResult monoZslResult1E = mPreviewCaptureResult;
+        final CaptureResult monoZslResult1E = mPreviewCaptureResult;
         final CaptureRequest monoZslRequest1E = mPreviewCaptureRequest;
         final int monoZslRotation1E =
                 PhotonCamera.getGravity().getCameraRotation(mSensorOrientation);
@@ -117,8 +117,21 @@ if c.count(anchor2) != 1:
     raise SystemExit("triggerZslCapture completion anchor mismatch")
 c = c.replace(anchor2, insert2, 1)
 
+dpath = root / "app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoLivePairDiagnostics1E.java"
+d = dpath.read_text()
+old_sig = '''    public static void writeCompleted(JSONObject preview, CaptureRequest request,
+                                      TotalCaptureResult result, String physicalCameraId,
+                                      int cameraRotationDegrees) {'''
+new_sig = '''    public static void writeCompleted(JSONObject preview, CaptureRequest request,
+                                      CaptureResult result, String physicalCameraId,
+                                      int cameraRotationDegrees) {'''
+if d.count(old_sig) != 1:
+    raise SystemExit("GL1E diagnostic writer signature anchor mismatch")
+d = d.replace(old_sig, new_sig, 1)
+
 cc.write_text(c)
 cf.write_text(f)
+dpath.write_text(d)
 
 print("MONOLIVEGL1E_LIVEPAIRDIAG1C_ZSL applied")
 print(" - Motion/ZSL mirrors actual preview ISO/shutter with scale 1")
