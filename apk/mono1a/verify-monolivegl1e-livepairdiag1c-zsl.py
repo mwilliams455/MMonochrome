@@ -19,12 +19,12 @@ checks=[
  ("1C marker fragment","MONOLIVEGL1E_LIVEPAIRDIAG1C_ZSL" in f),
  ("ZSL mode is Motion","selectedMode == CameraMode.MOTION" in c),
  ("ZSL actual preview mirror","actualIso1E, actualExposureNs1E,\n                                actualIso1E, actualExposureNs1E, 1.0" in f),
- ("ZSL result authority","final TotalCaptureResult monoZslResult1E = mPreviewCaptureResult;" in c),
+ ("ZSL result authority","final CaptureResult monoZslResult1E = mPreviewCaptureResult;" in c),
  ("ZSL request authority","final CaptureRequest monoZslRequest1E = mPreviewCaptureRequest;" in c),
  ("ZSL snapshot before ring","c.find('monoZslSnapshot1E') < c.find('List<Image> rawImages;')"),
  ("ZSL writer","MonoLivePairDiagnostics1E.writeCompleted(\n                    monoZslSnapshot1E, monoZslRequest1E, monoZslResult1E" in c),
  ("non-ZSL writer retained","monoLivePairPreviewSnapshot1E, request, result" in c),
- ("FileManager writer retained","FileManager.sDCIM_CAMERA.getAbsolutePath()" in d),
+ ("writer accepts CaptureResult","CaptureResult result, String physicalCameraId" in d),\n ("FileManager writer retained","FileManager.sDCIM_CAMERA.getAbsolutePath()" in d),
 ]
 for label,ok in checks:
     print(("OK   " if ok else "FAIL ")+label)
