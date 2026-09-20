@@ -1,0 +1,158 @@
+name: Build MMonochrome MONOLIVEGL1E Live Pair Diagnostics 1D Spool
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/monolivegl1e-livepairdiag1d-spool
+    paths:
+      - 'apk/mono1a/MonoLivePairExport1D.java'
+      - 'apk/mono1a/apply-monolivegl1e-livepairdiag1d-spool.py'
+      - 'apk/mono1a/verify-monolivegl1e-livepairdiag1d-spool.py'
+      - '.github/workflows/build-mono1a-monolivegl1e-livepairdiag1d-spool.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mono-livepair1d-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout MMonochrome overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Checkout frozen M9 Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+      - name: Checkout pinned M9 portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Replay successful GL1E1C assembly and all isolation checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/apply-monolivegl1e-livepairdiag1d-spool.py apk/mono1a/verify-monolivegl1e-livepairdiag1d-spool.py
+          python3 -u - <<'PY' | tee MONOLIVEGL1E1D_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines = Path('.github/workflows/build-mono1a-monolivegl1e-livepairdiag1c-zsl.yml').read_text().splitlines()
+          stop = lines.index('      - name: Set up JDK 17')
+          count = 0
+          i = 0
+          name = ''
+          while i < stop:
+              line = lines[i]
+              if line.startswith('      - name: '):
+                  name = line.split(': ', 1)[1]
+              if line.strip() != 'run: |':
+                  i += 1
+                  continue
+              i += 1
+              block = []
+              while i < stop:
+                  line = lines[i]
+                  if line.startswith('      - name: '):
+                      break
+                  if line.startswith('          '):
+                      block.append(line[10:])
+                  elif not line.strip():
+                      block.append('')
+                  else:
+                      raise SystemExit('Unexpected run-block boundary: '+line)
+                  i += 1
+              count += 1
+              script = Path('/tmp/monolive1d_parent_%02d.sh' % count)
+              script.write_text('\n'.join(block)+'\n')
+              print('===== GL1E1C sealed replay: '+name+' =====', flush=True)
+              subprocess.run(['bash', str(script)], check=True)
+          if count != 17:
+              raise SystemExit('Expected 17 sealed assembly commands, got '+str(count))
+          print('GL1E1C assembly replay PASS')
+          PY
+      - name: Apply GL1E1D diagnostic spool and embedded record
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/apply-monolivegl1e-livepairdiag1d-spool.py "$ROOT"
+          python3 apk/mono1a/verify-monolivegl1e-livepairdiag1d-spool.py "$ROOT" | tee MONOLIVEGL1E1D_VERIFY.txt
+      - name: Host test real export and deferred-store logic with storage mocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 60 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o /tmp/mono1d-json.jar
+          sha256sum /tmp/mono1d-json.jar | tee MONOLIVEGL1E1D_HOST_DEPENDENCY.txt
+          python3 -u apk/mono1a/verify-monolivegl1e-livepairdiag1d-spool.py "$GITHUB_WORKSPACE/m9base/PhotonCamera" /tmp/mono1d-json.jar | tee MONOLIVEGL1E1D_HOST_TESTS.txt
+      - name: Snapshot assembled source and proofs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          JAVA="$ROOT/app/src/main/java/com/particlesdevs/photoncamera"
+          OUT=monolivegl1e1d-assembled-source
+          mkdir -p "$OUT"
+          cp -a monolivegl1e1c-assembled-source/. "$OUT/"
+          cp "$JAVA/capture/CaptureController.java" "$OUT/"
+          cp "$JAVA/m9/preview/MonoLivePairDiagnostics1E.java" "$OUT/"
+          cp "$JAVA/m9/preview/MonoLivePairExport1D.java" "$OUT/"
+          cp "$JAVA/m9/M9DeferredMetadataStore.java" "$OUT/"
+          cp "$JAVA/m9/M9DiagnosticBurstSpool.java" "$OUT/"
+          cp "$JAVA/processing/parameters/IsoExpoSelector.java" "$OUT/"
+          cp "$ROOT/MONOLIVEGL1E1D_ISOLATION.json" "$OUT/"
+          cp MONOLIVEGL1E1D_VERIFY.txt MONOLIVEGL1E1D_HOST_TESTS.txt MONOLIVEGL1E1D_HOST_DEPENDENCY.txt "$OUT/"
+          printf 'BUILD_MARKER=MONOLIVEGL1E_LIVEPAIRDIAG1D_SPOOL\nCOMMIT=%s\nPRIMARY_JPEG_CHANGED=0\nPREVIEW_TONE_CHANGED=0\nDEVICE_EXPORT_VALIDATED=0\n' "$GITHUB_SHA" > "$OUT/GL1E1D_PROVENANCE.txt"
+          find "$OUT" -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > "$OUT/SHA256SUMS.txt"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+      - name: Build MONOLIVEGL1E1D APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOLIVEGL1E1D_GRADLE.log"
+      - name: Record APK SHA256
+        if: success()
+        run: sha256sum m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk | tee MONOLIVEGL1E1D_APK_SHA256.txt
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL1E1D-EVIDENCE
+          path: |
+            MONOLIVEGL1E1D_*.log
+            MONOLIVEGL1E1D_*.txt
+            monolivegl1e1d-assembled-source/
+          if-no-files-found: warn
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOLIVEGL1E-LIVEPAIRDIAG1D-SPOOL
+          path: |
+            m9base/PhotonCamera/app/build/outputs/apk/debug/*.apk
+            MONOLIVEGL1E1D_APK_SHA256.txt
+            monolivegl1e1d-assembled-source/GL1E1D_PROVENANCE.txt
+          if-no-files-found: error
