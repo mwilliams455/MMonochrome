@@ -1,0 +1,153 @@
+name: Build MMonochrome MONOAUTO1A Shared Exposure Plan
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/monoauto1a-exposureplan]
+    paths:
+      - 'apk/mono1a/monoauto1a/**'
+      - '.github/workflows/build-mono1a-monoauto1a.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mono-auto1a-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Checkout frozen Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+      - name: Checkout pinned portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Replay unchanged GL2B MONOOUTPUT1A and parent tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/monoauto1a/*.py
+          python3 -u - <<'PY' | tee MONOAUTO1A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monolivegl2b.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':i+=1;continue
+              i+=1;block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1;p=Path('/tmp/mono-auto-parent-%d.sh'%count);p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==3,count
+          print('GL2B MONOOUTPUT1A assembly and all parent tests PASS')
+          PY
+      - name: Apply and test shared exposure plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/monoauto1a/apply.py "$ROOT" | tee MONOAUTO1A_APPLY.txt
+          python3 apk/mono1a/monoauto1a/test.py "$ROOT" | tee MONOAUTO1A_TESTS.txt
+          /usr/bin/python3 apk/mono1a/monolivegl2a/test_gpu.py "$ROOT" | tee MONOAUTO1A_GPU.json
+      - name: Snapshot assembled source and proofs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,shutil,hashlib
+          root=Path('m9base/PhotonCamera');out=Path('monoauto1a-evidence');out.mkdir(exist_ok=True)
+          proof=json.loads((root/'MONOAUTO1A_ISOLATION.json').read_text())
+          for rel in set(proof['changed'])|set(proof['frozen']):
+              p=out/rel;p.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(root/rel,p)
+          for p in (root/'app/src/main/java/com/particlesdevs/photoncamera/m9/exposure').glob('*.java'):
+              dst=out/p.relative_to(root);dst.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(p,dst)
+          shutil.copyfile(root/'MONOAUTO1A_ISOLATION.json',out/'MONOAUTO1A_ISOLATION.json')
+          for name in ['MONOOUTPUT1A_EXPORT_TEST.json','MONOOUTPUT1A_ISOLATION.json','MONOLIVEGL2B_ISOLATION.json']:
+              shutil.copyfile(root/name,out/name)
+          shutil.copytree('apk/mono1a/monoauto1a',out/'overlay',ignore=shutil.ignore_patterns('__pycache__'))
+          PY
+          printf 'REVISION=MONOAUTO1A_EXPOSUREPLAN\nCOMMIT=%s\nSTILL_RENDERER_CHANGED=0\nDNG_EXPORTER_CHANGED=0\nSHADER_CHANGED=0\nALLOCATION2G_PORTED=0\nRENDERED_DARK_AUTO_PORTED=0\nPHONE_VALIDATED=0\n' "$GITHUB_SHA" > monoauto1a-evidence/PROVENANCE.txt
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+      - name: Build MONOAUTO1A APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOAUTO1A_GRADLE.log"
+      - name: Verify packaged rendering and exposure-plan markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MONOAUTO1A_APK_PROOF.txt
+          from pathlib import Path
+          import zipfile,hashlib,shutil,json
+          root=Path('m9base/PhotonCamera');proof=json.loads((root/'MONOAUTO1A_ISOLATION.json').read_text())
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'));assert len(apks)==1
+          for rel,h in proof['frozen'].items():assert hashlib.sha256((root/rel).read_bytes()).hexdigest()==h,rel
+          with zipfile.ZipFile(apks[0]) as z:
+              for rel in ['assets/shaders/preview/main_fs.glsl','assets/mono/mono_curve02_gl2a.bin']:
+                  assert hashlib.sha256(z.read(rel)).hexdigest()==proof['frozen']['app/src/main/'+rel],rel
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [b'MONOAUTO1A_EXPOSUREPLAN',b'MonoExposureStore1A',b'setMonoPlannedExpo1A',b'monoExposurePlan1A',b'recordedVsSharedPlanEv',b'MONOOUTPUT1A_LINEAR_DNG',b'MONOLIVEGL2B_CURVECONTRACT',b'_MONO_LINEAR1A.dng']:
+                  assert marker in dex,marker
+          out=Path('MMonochrome_MONOAUTO1A_EXPOSUREPLAN.apk');shutil.copyfile(apks[0],out)
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MONOAUTO1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS frozen shader/curve and still/DNG files; active shared-plan DEX markers')
+          print(digest,out.stat().st_size)
+          PY
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOAUTO1A-EVIDENCE
+          path: |
+            MONOAUTO1A_*.log
+            MONOAUTO1A_*.txt
+            MONOAUTO1A_GPU.json
+            MONOOUTPUT1A_READERS.log
+            monoauto1a-evidence/
+          if-no-files-found: warn
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOAUTO1A-EXPOSUREPLAN
+          path: |
+            MMonochrome_MONOAUTO1A_EXPOSUREPLAN.apk
+            MONOAUTO1A_APK_SHA256.txt
+            MONOAUTO1A_APK_PROOF.txt
+            monoauto1a-evidence/PROVENANCE.txt
+          if-no-files-found: error
