@@ -33,10 +33,20 @@ for fixture in fixtures['fixtures']:
         with rawpy.imread(str(path)) as raw:
             a=raw.raw_image_visible.copy();item['librawNumColors']=raw.num_colors
             assert np.array_equal(a,expected),(path.name,a.shape,expected.shape)
-            assert raw.raw_pattern is None and raw.num_colors==1
+            # rawpy represents a flat monochrome sensor as a 1x1 zero pattern;
+            # None is reserved for stacked RGB input, not monochrome.
+            pattern=raw.raw_pattern
+            item['rawpyMonochromePattern']=None if pattern is None else pattern.tolist()
+            print('LIBRAW_METADATA',path.name,item,flush=True)
+            assert raw.num_colors==1 and pattern is not None and pattern.shape==(1,1) and int(pattern[0,0])==0
             rgb=raw.postprocess(gamma=(1,1),no_auto_bright=True,output_bps=16,user_flip=0)
-            assert rgb.shape==(fixture['height'],fixture['width'],3),rgb.shape
-            assert np.array_equal(rgb[:,:,0],rgb[:,:,1]) and np.array_equal(rgb[:,:,0],rgb[:,:,2])
+            item['librawDevelopedShape']=list(rgb.shape)
+            assert rgb.shape[:2]==(fixture['height'],fixture['width']) and rgb.ndim==3 and rgb.shape[2] in (1,3),rgb.shape
+            # Depending on LibRaw output options, monochrome output is one plane
+            # or three identical planes. Do not modify/override the input colour count.
+            if rgb.shape[2]==3:
+                assert np.array_equal(rgb[:,:,0],rgb[:,:,1]) and np.array_equal(rgb[:,:,0],rgb[:,:,2])
+            assert rgb.dtype==np.uint16 and np.ptp(rgb)>0
             item['librawAllSamplesExact']=True;item['librawDevelopsMonochrome']=True
     else:item['librawStatus']='tiny_fixture_not_camera_sized'
     # ExifTool validation is independent of the TIFF reader and retained verbatim.
