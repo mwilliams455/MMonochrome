@@ -70,7 +70,12 @@ jobs:
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
           python3 apk/mono1a/monooutput1b/apply.py "$ROOT" | tee MONOOUTPUT1B_APPLY.txt
-          python3 apk/mono1a/monooutput1b/test.py "$ROOT" | tee MONOOUTPUT1B_TESTS.txt
+          # The parent installs the independent DNG readers in this isolated env.
+          # Invoke it explicitly; activation inside a parent subprocess cannot change this step.
+          READER_PYTHON=/tmp/monooutput-reader-env/bin/python
+          test -x "$READER_PYTHON"
+          "$READER_PYTHON" -c 'import sys,numpy,tifffile; print("DNG reader environment:",sys.executable,"numpy",numpy.__version__,"tifffile",tifffile.__version__)' | tee MONOOUTPUT1B_TEST_ENV.txt
+          "$READER_PYTHON" apk/mono1a/monooutput1b/test.py "$ROOT" 2>&1 | tee MONOOUTPUT1B_TESTS.txt
           /usr/bin/python3 apk/mono1a/monolivegl2a/test_gpu.py "$ROOT" | tee MONOOUTPUT1B_GPU.json
       - name: Snapshot runtime source and full isolation proof
         shell: bash
