@@ -1,0 +1,146 @@
+name: Build MMonochrome MONOOUTPUT1D Baseline Raw IFD
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/monooutput1d-baselineexposure-rawifd]
+    paths:
+      - 'apk/mono1a/monooutput1d/**'
+      - '.github/workflows/build-mono1a-monooutput1d.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mono-output1d-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Checkout frozen Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+      - name: Checkout pinned portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Replay MONOOUTPUT1C and all parent tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/monooutput1d/*.py
+          python3 -u - <<'PY' | tee MONOOUTPUT1D_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monooutput1c.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1; continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-output1d-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==3,count
+          print('MONOOUTPUT1C assembly and parent render/exposure/DNG/storage tests PASS')
+          PY
+      - name: Apply BaselineExposure raw-IFD fix and test exact pixels
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/monooutput1d/apply.py "$ROOT" | tee MONOOUTPUT1D_APPLY.txt
+          /tmp/monooutput-reader-env/bin/python apk/mono1a/monooutput1d/test.py "$ROOT" 2>&1 | tee MONOOUTPUT1D_TESTS.txt
+          exiftool -validate -warning -error -a "$ROOT/monooutput1d-fixtures/SYNTHETIC_16.dng" | tee MONOOUTPUT1D_EXIFTOOL.txt
+          exiftool -G1 -s -BaselineExposure "$ROOT/monooutput1d-fixtures/SYNTHETIC_16.dng" | tee MONOOUTPUT1D_BASELINE_TAG.txt
+      - name: Snapshot evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT=monooutput1d-evidence
+          mkdir -p "$OUT"
+          cp "$ROOT/MONOOUTPUT1D_ISOLATION.json" "$OUT/"
+          cp "$ROOT/MONOOUTPUT1D_TEST_REPORT.json" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngWriter1A.java" "$OUT/"
+          cp apk/mono1a/monooutput1d/*.py "$OUT/"
+          cp MONOOUTPUT1D_*.txt "$OUT/" || true
+          printf 'REVISION=MONOOUTPUT1D_BASELINE_RAWIFD\nCOMMIT=%s\nBASELINE=MONOOUTPUT1C_CURSORQUERY\nPIXEL_SAMPLES_CHANGED=0\nEXPOSURE_PLAN_CHANGED=0\nJPEG_RENDER_CHANGED=0\nDNG_STORAGE_SCALE_CHANGED=0\nPHONE_LIGHTROOM_VALIDATED=0\n' "$GITHUB_SHA" > "$OUT/PROVENANCE.txt"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+      - name: Build MONOOUTPUT1D APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOOUTPUT1D_GRADLE.log"
+      - name: Verify packaged metadata-fix markers and frozen assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MONOOUTPUT1D_APK_PROOF.txt
+          from pathlib import Path
+          import zipfile,hashlib,shutil
+          root=Path('m9base/PhotonCamera')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk')); assert len(apks)==1
+          with zipfile.ZipFile(apks[0]) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [b'MONOOUTPUT1D_BASELINE_RAWIFD',b'MONOOUTPUT1C_CURSORQUERY',b'MONOOUTPUT1B_DURABLE_EXPORT',b'MONOAUTO1A_EXPOSUREPLAN',b'_MONO_LINEAR1A.dng']:
+                  assert marker in dex,marker
+          out=Path('MMonochrome_MONOOUTPUT1D_BASELINE_RAWIFD.apk'); shutil.copyfile(apks[0],out)
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MONOOUTPUT1D_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS metadata fix markers and Android build')
+          print(digest,out.stat().st_size)
+          PY
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOOUTPUT1D-EVIDENCE
+          path: |
+            MONOOUTPUT1D_*.log
+            MONOOUTPUT1D_*.txt
+            monooutput1d-evidence/
+          if-no-files-found: warn
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOOUTPUT1D-BASELINE-RAWIFD
+          path: |
+            MMonochrome_MONOOUTPUT1D_BASELINE_RAWIFD.apk
+            MONOOUTPUT1D_APK_SHA256.txt
+            MONOOUTPUT1D_APK_PROOF.txt
+            monooutput1d-evidence/PROVENANCE.txt
+          if-no-files-found: error
