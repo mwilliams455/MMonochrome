@@ -10,6 +10,16 @@ gradle=root/"app/build.gradle"
 if not writer.exists(): raise SystemExit("MonoDngWriter1A missing")
 s=writer.read_text()
 before=s.encode()
+# Emit a real runtime/file marker so the packaged APK and generated DNG can be
+# distinguished from the earlier tag-placement bug.
+marker='    public static final String METADATA_REVISION="MONOOUTPUT1D_BASELINE_RAWIFD";\n'
+ctor='    private MonoDngWriter1A() {}\n'
+if marker not in s:
+    if s.count(ctor)!=1: raise SystemExit("writer constructor anchor mismatch")
+    s=s.replace(ctor,ctor+marker,1)
+# Also put the revision in Software metadata; this does not touch raw samples.
+s=s.replace('main.u16(284,1);main.text(305,"MMonochrome MONODNG1A");',
+            'main.u16(284,1);main.text(305,"MMonochrome MONODNG1D "+METADATA_REVISION);',1)
 old='''        double compensation=Math.log(plane.sourceUnitsPerWhite)/Math.log(2);
         main.add(50730,SRATIONAL,1,rational(Math.round(compensation*1000000),1000000));
         main.add(50731,RATIONAL,1,rational(1,1));main.add(50732,RATIONAL,1,rational(1,1));
