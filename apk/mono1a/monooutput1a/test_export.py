@@ -33,12 +33,12 @@ for fixture in fixtures['fixtures']:
         with rawpy.imread(str(path)) as raw:
             a=raw.raw_image_visible.copy();item['librawNumColors']=raw.num_colors
             assert np.array_equal(a,expected),(path.name,a.shape,expected.shape)
-            # rawpy represents a flat monochrome sensor as a 1x1 zero pattern;
-            # None is reserved for stacked RGB input, not monochrome.
+            # rawpy represents a flat monochrome sensor as a 1x1 pattern;
+            # LibRaw COLOR returns sentinel 6 when filters==0; None means stacked RGB.
             pattern=raw.raw_pattern
             item['rawpyMonochromePattern']=None if pattern is None else pattern.tolist()
             print('LIBRAW_METADATA',path.name,item,flush=True)
-            assert raw.num_colors==1 and pattern is not None and pattern.shape==(1,1) and int(pattern[0,0])==0
+            assert raw.num_colors==1 and pattern is not None and pattern.shape==(1,1) and int(pattern[0,0])==6
             rgb=raw.postprocess(gamma=(1,1),no_auto_bright=True,output_bps=16,user_flip=0)
             item['librawDevelopedShape']=list(rgb.shape)
             assert rgb.shape[:2]==(fixture['height'],fixture['width']) and rgb.ndim==3 and rgb.shape[2] in (1,3),rgb.shape
