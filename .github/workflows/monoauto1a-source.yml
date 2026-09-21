@@ -1,0 +1,60 @@
+name: MONOAUTO1A sealed source preparation
+on:
+  push:
+    branches: [research/monoauto1a-exposureplan]
+    paths: [.github/workflows/monoauto1a-source.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+      - uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Reproduce GL2B source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY'
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monolivegl2b.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |': i+=1;continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Bad boundary '+line)
+                  i+=1
+              count+=1;p=Path('/tmp/auto-source-%d.sh'%count);p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==3,count
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MONOAUTO1A-SEALED-SOURCE
+          path: |
+            m9base/PhotonCamera/app/src/main/java/
+            m9base/PhotonCamera/MONOLIVEGL2B_ISOLATION.json
+            apk/mono1a/
+            .github/workflows/
+          include-hidden-files: true
