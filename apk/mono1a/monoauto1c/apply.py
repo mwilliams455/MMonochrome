@@ -57,6 +57,7 @@ anchor = """        d.put("limitations","Bayer_interpolation_and_source_luminanc
         return new Pending(p,d);
 """
 replacement = """        d.put("limitations","Bayer_interpolation_and_source_luminance_mix_committed;_earlier_clipping_not_recovered");
+        d.put("placementProbeRevision",MonoPlacementProbe1A.REVISION);
         d.put("monoPlacementProbe1A",MonoPlacementProbe1A.evaluate(
                 p,rawUq99,rawUq995,rawUq998,rawHardClipFraction));
         d.put("copyElapsedMs",(System.nanoTime()-start)/1e6);
