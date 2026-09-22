@@ -1,0 +1,23 @@
+{
+  "schema": "mmonochrome.leica_typ246.oracle.v1",
+  "sourceFile": "leica_m_monochrom_typ_246_02.dng",
+  "sourceSha256": "45d5cd4d83c19a9594e1936d5fba3d6dfd786bc56a6594fab6f1732a4e68c98e",
+  "camera": "LEICA M MONOCHROM (Typ 246)",
+  "rawWidth": 5984,
+  "rawHeight": 4000,
+  "bitsPerSample": 12,
+  "blackLevel": 0,
+  "whiteLevel": 3750,
+  "globalMedianCode": 329,
+  "globalMedianNormalizedToWhite": 0.08773333333333333,
+  "centerWeightedMedianCode": 330,
+  "centerWeightedMedianNormalizedToWhite": 0.088,
+  "referenceTarget": 0.0876544,
+  "globalMedianDeltaToReferenceEv": -0.0012985712750254682,
+  "centerWeightedMedianDeltaToReferenceEv": -0.005677011785599775,
+  "rawFractionAtOrAboveWhiteLevel": 0.05396139705882353,
+  "rawMaximumCode": 3971,
+  "referenceMeaning": "recovered_M9_TC20_scene_key_reference",
+  "interpretation": "single_real_Leica_sample_supports_reference_scale_similarity_but_does_not_prove_a_universal_Leica_AE_target",
+  "runtimeUse": "diagnostic_comparison_only_no_capture_mutation"
+}
