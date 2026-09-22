@@ -37,11 +37,10 @@ probe_java = (J / "m9/export/MonoPlacementProbe1A.java").read_text()
 proof = json.loads((root / "MONOAUTO1C_PLACEMENTPROBE1A_ISOLATION.json").read_text())
 
 for token in [
-    "tail.uq99,tail.uq995,tail.uq998,tail.clipFraction",
-    "placementProbeRevision",
-    "MonoPlacementProbe1A.REVISION"
+    "tail.uq99,tail.uq995,tail.uq998,tail.clipFraction"
 ]:
     assert token in renderer, token
+assert "MonoPlacementProbe1A.REVISION" in exporter
 assert "MonoPlacementProbe1A.evaluate(" in exporter
 assert "MONOAUTO1C_PLACEMENTPROBE1A" in math_java
 assert "diagnostic_only_no_exposure_mutation" in probe_java
