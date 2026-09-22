@@ -79,13 +79,6 @@ new_call = m.group(1) + """,
                             tail.uq99,tail.uq995,tail.uq998,tail.clipFraction""" + m.group(2)
 r = r[:m.start()] + new_call + r[m.end():]
 
-marker_anchor = '                d.put("outputRevision",MonoDngExport1A.REVISION);'
-marker_repl = '                d.put("placementProbeRevision",MonoPlacementProbe1A.REVISION);\n' + marker_anchor
-if marker_anchor not in r:
-    raise SystemExit("renderer outputRevision anchor missing")
-if "placementProbeRevision" not in r:
-    r = r.replace(marker_anchor, marker_repl, 1)
-
 renderer.write_text(r)
 
 g = gradle.read_text()
