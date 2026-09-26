@@ -92,7 +92,7 @@ public class Test {
 
   // Broad-tail permission can never exceed the actual MFM recommendation.
   MonoPlacementAssist1D.Decision weakMfm=MonoPlacementAssist1D.evaluate(true,m(.20),pos(),
-    p(.020,.70,.60,.70,0.0));
+    p(.020,.90,.60,.70,0.0));
   near(weakMfm.appliedEv,.20,1e-12);
 
   // Existing strict path remains available even when broad-tail is unavailable.
