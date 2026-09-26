@@ -1,0 +1,176 @@
+name: Build MMonochrome MONOAUTO1D Placement Assist
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/monoauto1d-placementassist1a]
+    paths:
+      - 'apk/mono1a/monoauto1d/**'
+      - '.github/workflows/build-mono1a-monoauto1d.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-auto1d-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout pinned portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Replay MONOAUTO1C parent through host validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/monoauto1d/*.py
+          python3 -u - <<'PY' | tee MONOAUTO1D_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monoauto1c.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1; continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-auto1d-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==3,count
+          print('MONOAUTO1C parent assembly/probe tests PASS')
+          PY
+
+      - name: Apply Leica Monochrom placement assist
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/monoauto1d/apply.py "$ROOT" | tee MONOAUTO1D_APPLY.txt
+          python3 apk/mono1a/monoauto1d/test.py "$ROOT" | tee MONOAUTO1D_TESTS.txt
+
+      - name: Snapshot evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT=monoauto1d-evidence
+          mkdir -p "$OUT"
+          cp "$ROOT/MONOAUTO1D_PLACEMENTASSIST1A_ISOLATION.json" "$OUT/"
+          cp "$ROOT/MONOAUTO1D_PLACEMENTASSIST1A_TEST_REPORT.json" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/exposure/MonoPlacementAssist1D.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/exposure/MonoExposurePlan1A.java" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoGpuPreview2A.java" "$OUT/"
+          cp "$ROOT/app/src/main/assets/shaders/preview/main_fs.glsl" "$OUT/"
+          cp apk/mono1a/monoauto1d/*.py "$OUT/"
+          printf 'REVISION=MONOAUTO1D_PLACEMENTASSIST1A\nCOMMIT=%s\nPARENT=MONOAUTO1C_PLACEMENTPROBE1A\nCAPTURE_EXPOSURE_CHANGED=1\nREFERENCE_TARGET=0.0876544\nPOSITIVE_LIMIT_EV=0.50\nNEGATIVE_LIMIT_EV=-0.50\nLIVE_SOURCE_Q998_LIMIT=0.92\nJPEG_RENDER_CHANGED=0\nDNG_SAMPLES_CHANGED=0\nBASELINE_EXPOSURE_CHANGED=0\nCURVE02_CHANGED=0\nHDR=0\nPHONE_VALIDATED=0\n' "$GITHUB_SHA" > "$OUT/PROVENANCE.txt"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Build MONOAUTO1D APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOAUTO1D_GRADLE.log"
+
+      - name: Verify packaged placement-assist markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MONOAUTO1D_APK_PROOF.txt
+          from pathlib import Path
+          import zipfile,hashlib,shutil,json
+          root=Path('m9base/PhotonCamera')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk')); assert len(apks)==1
+          with zipfile.ZipFile(apks[0]) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [
+                  b'MONOAUTO1D_PLACEMENTASSIST1A',
+                  b'MONOAUTO1D_SOURCE1D_PACK16',
+                  b'MONOOUTPUT1E_BASELINE_IFD0',
+                  b'MONOAUTO1A_EXPOSUREPLAN',
+                  b'live_SOURCE1D_XYZ_D50_Y_before_curve02',
+                  b'monoPlacementAssist1D',
+                  b'_MONO_LINEAR1A.dng'
+              ]:
+                  assert marker in dex,marker
+          proof=json.loads((root/'MONOAUTO1D_PLACEMENTASSIST1A_ISOLATION.json').read_text())
+          assert proof['captureExposureChanged'] is True
+          for k in ['jpegRendererChanged','dngSamplesChanged','baselineExposureChanged',
+                    'curve02AssetChanged','normalDisplayMonochromeFunctionChanged']:
+              assert proof[k] is False,k
+          out=Path('MMonochrome_MONOAUTO1D_PLACEMENTASSIST1A.apk')
+          shutil.copyfile(apks[0],out)
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MONOAUTO1D_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS MONOAUTO1D placement assist markers and Android build')
+          print(digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOAUTO1D-PLACEMENTASSIST1A-EVIDENCE
+          path: |
+            MONOAUTO1D_*.log
+            MONOAUTO1D_*.txt
+            monoauto1d-evidence/
+          if-no-files-found: warn
+
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOAUTO1D-PLACEMENTASSIST1A
+          path: |
+            MMonochrome_MONOAUTO1D_PLACEMENTASSIST1A.apk
+            MONOAUTO1D_APK_SHA256.txt
+            MONOAUTO1D_APK_PROOF.txt
+            monoauto1d-evidence/PROVENANCE.txt
+          if-no-files-found: error
