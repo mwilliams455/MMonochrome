@@ -1,0 +1,171 @@
+name: Build MMonochrome MONOAUTO1D1D Broad Tail 0.5
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/monoauto1d-placementassist1d-broadtail05]
+    paths:
+      - 'apk/mono1a/monoauto1d1d/**'
+      - '.github/workflows/build-mono1a-monoauto1d1d.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-auto1d1d-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout pinned portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Replay MONOAUTO1D1C parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/monoauto1d1d/*.py
+          python3 -u - <<'PY' | tee MONOAUTO1D1D_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monoauto1d1c.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1; continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-auto1d1d-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==3,count
+          print('MONOAUTO1D1C parent assembly/tests PASS')
+          PY
+
+      - name: Apply broad-tail 0.5 percent calibration
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 apk/mono1a/monoauto1d1d/apply.py "$ROOT" | tee MONOAUTO1D1D_APPLY.txt
+          python3 apk/mono1a/monoauto1d1d/test.py "$ROOT" | tee MONOAUTO1D1D_TESTS.txt
+
+      - name: Snapshot evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT=monoauto1d1d-evidence
+          mkdir -p "$OUT"
+          cp "$ROOT/MONOAUTO1D_PLACEMENTASSIST1D_BROADTAIL05_ISOLATION.json" "$OUT/"
+          cp "$ROOT/MONOAUTO1D_PLACEMENTASSIST1D_BROADTAIL05_TEST_REPORT.json" "$OUT/"
+          cp "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/exposure/MonoPlacementAssist1D.java" "$OUT/"
+          cp apk/mono1a/monoauto1d1d/*.py "$OUT/"
+          printf 'REVISION=MONOAUTO1D_PLACEMENTASSIST1D_BROADTAIL05\nCOMMIT=%s\nPARENT=MONOAUTO1D_PLACEMENTASSIST1C_BROADTAIL1A\nONLY_POLICY_CHANGE=BROAD_TAIL_MAX_EXISTING_CLIP_FRACTION_0.002_TO_0.005\nBROAD_TAIL_Q99_TARGET=250_OVER_255\nGLOBAL_POSITIVE_LIMIT_EV=0.50\nJPEG_RENDER_CHANGED=0\nDNG_SAMPLES_CHANGED=0\nBASELINE_EXPOSURE_CHANGED=0\nCURVE02_CHANGED=0\nMFM_CHANGED=0\nHDR=0\nPHONE_VALIDATED=0\n' "$GITHUB_SHA" > "$OUT/PROVENANCE.txt"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Build MONOAUTO1D1D APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOAUTO1D1D_GRADLE.log"
+
+      - name: Verify packaged markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MONOAUTO1D1D_APK_PROOF.txt
+          from pathlib import Path
+          import zipfile,hashlib,shutil,json
+          root=Path('m9base/PhotonCamera')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk')); assert len(apks)==1
+          with zipfile.ZipFile(apks[0]) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [
+                  b'MONOAUTO1D_PLACEMENTASSIST1D_BROADTAIL05',
+                  b'monoauto1d_mfm_positive_broadtail_placement_lift',
+                  b'single_exposure_preserve_broad_99pct_tail_allow_small_extreme_highlight_sacrifice',
+                  b'MONOAUTO1D1B_SOURCE1D16_SENSORRGBMAX8',
+                  b'MONOOUTPUT1E_BASELINE_IFD0'
+              ]:
+                  assert marker in dex,marker
+          proof=json.loads((root/'MONOAUTO1D_PLACEMENTASSIST1D_BROADTAIL05_ISOLATION.json').read_text())
+          assert proof['policyChangeOnly']=='BROAD_TAIL_MAX_EXISTING_CLIP_FRACTION_0p002_to_0p005'
+          for k in ['jpegRendererChanged','dngSamplesChanged','baselineExposureChanged','curve02AssetChanged',
+                    'previewProbeChanged','postCaptureProbeChanged','mfmChanged','HDR','postCaptureRescue']:
+              assert proof[k] is False,k
+          out=Path('MMonochrome_MONOAUTO1D_PLACEMENTASSIST1D_BROADTAIL05.apk')
+          shutil.copyfile(apks[0],out)
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MONOAUTO1D1D_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS MONOAUTO1D1D broad-tail 0.5 build')
+          print(digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOAUTO1D-PLACEMENTASSIST1D-BROADTAIL05-EVIDENCE
+          path: |
+            MONOAUTO1D1D_*.log
+            MONOAUTO1D1D_*.txt
+            monoauto1d1d-evidence/
+          if-no-files-found: warn
+
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOAUTO1D-PLACEMENTASSIST1D-BROADTAIL05
+          path: |
+            MMonochrome_MONOAUTO1D_PLACEMENTASSIST1D_BROADTAIL05.apk
+            MONOAUTO1D1D_APK_SHA256.txt
+            MONOAUTO1D1D_APK_PROOF.txt
+            monoauto1d1d-evidence/PROVENANCE.txt
+          if-no-files-found: error
