@@ -35,6 +35,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Install DNG validation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check 'numpy==2.3.5' 'tifffile==2026.5.15'
+          python3 -c 'import numpy,tifffile; print("DNG validation:",numpy.__version__,tifffile.__version__)'
       - name: Assemble verified 1G parent
         shell: bash
         run: |
