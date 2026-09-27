@@ -11,6 +11,10 @@ proof=json.loads((root/'MONOSAVELOOKUP1A_ISOLATION.json').read_text())
 for rel,sha in proof['frozenSourceHashes'].items():
     assert hashlib.sha256((root/rel).read_bytes()).hexdigest()==sha,rel
 stubs=runpy.run_path(str(here.parent/'monooutput1c/mocks.py'))['stubs'].copy()
+# The inherited resolver mock uses Objects.equals for opaque document IDs.
+key='android/content/ContentResolver.java'
+assert stubs[key].count('import java.io.*;')==1
+stubs[key]=stubs[key].replace('import java.io.*;', 'import java.util.Objects; import java.io.*;', 1)
 # Add the two public APIs used by the candidate; IDs remain opaque, not paths.
 key='android/net/Uri.java'
 anchor=' public String id(){return id;}'
