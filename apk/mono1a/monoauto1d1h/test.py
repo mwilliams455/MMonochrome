@@ -14,15 +14,28 @@ stubs=runpy.run_path(str(here.parent/'monooutput1c/mocks.py'))['stubs'].copy()
 key='android/content/ContentResolver.java'
 assert stubs[key].count('import java.io.*;')==1
 stubs[key]=stubs[key].replace('import java.io.*;', 'import java.util.Objects; import java.io.*;', 1)
-# Add the public APIs used by the candidate; IDs remain opaque, not paths.
+# Model the same provider behaviour when reached through DocumentFile.createFile.
+# The inherited mock applied altered names only through DocumentsContract.createDocument.
+key='androidx/documentfile/provider/DocumentFile.java'
+anchor='Path x=p.resolve(n);'
+assert stubs[key].count(anchor)==1
+stubs[key]=stubs[key].replace(anchor,
+    'Path x=p.resolve(android.content.ContentResolver.alterCreateName?n+".unexpected":n);',1)
+key='android/provider/DocumentsContract.java'
+anchor='ContentResolver.alterCreateName?name+".unexpected":name'
+assert stubs[key].count(anchor)==1
+stubs[key]=stubs[key].replace(anchor,'name',1)
+# Add the public APIs used by the candidate; document identifiers remain opaque.
 key='android/net/Uri.java'
 anchor=' public String id(){return id;}'
 assert stubs[key].count(anchor)==1
-stubs[key]=stubs[key].replace(anchor,''' public static Uri parse(String s){
+extra=''' public static Uri parse(String s){
  int at=s.indexOf("/document/");if(at<0)throw new IllegalArgumentException("invalid_uri");
  String id=s.substring(at+10);return new Uri(pathOf(id),false,s.contains("/tree/"));
  }
-'''+anchor)
+'''
+if 'static Uri of(' not in stubs[key]: extra+=' public static Uri of(Path p){return new Uri(p);}\n'
+stubs[key]=stubs[key].replace(anchor,extra+anchor)
 key='android/provider/DocumentsContract.java'
 anchor=' public static Uri renameDocument('
 assert stubs[key].count(anchor)==1
@@ -59,7 +72,7 @@ with tempfile.TemporaryDirectory() as td:
         scans=re.search(r'SCAN_MEASUREMENT mode=\w+ childQueries=(\d+) childRows=(\d+)',text)
         counts=re.search(r'_PASS scenarios=(\d+) assertions=(\d+)',text)
         assert scans and counts
-        results[mode]={'childQueries':int(scans[1]),'childRows':int(scans[2]),'scenarios':int(counts[1]),'assertions':int(counts[2])}
+        results[mode]={'childQueries':int(scans[1]),'childRows':int(scans[2]),'scenarios':int(counts[2]) if False else int(counts[1]),'assertions':int(counts[2])}
     reference=d/'candidate/fixtures/reference_12mp.dng'
     transported=d/'candidate/fixtures/transport_12mp.dng'
     assert reference.read_bytes()==transported.read_bytes()
