@@ -11,11 +11,10 @@ proof=json.loads((root/'MONOSAVELOOKUP1A_ISOLATION.json').read_text())
 for rel,sha in proof['frozenSourceHashes'].items():
     assert hashlib.sha256((root/rel).read_bytes()).hexdigest()==sha,rel
 stubs=runpy.run_path(str(here.parent/'monooutput1c/mocks.py'))['stubs'].copy()
-# The inherited resolver mock uses Objects.equals for opaque document IDs.
 key='android/content/ContentResolver.java'
 assert stubs[key].count('import java.io.*;')==1
 stubs[key]=stubs[key].replace('import java.io.*;', 'import java.util.Objects; import java.io.*;', 1)
-# Add the two public APIs used by the candidate; IDs remain opaque, not paths.
+# Add the public APIs used by the candidate; IDs remain opaque, not paths.
 key='android/net/Uri.java'
 anchor=' public String id(){return id;}'
 assert stubs[key].count(anchor)==1
@@ -45,7 +44,14 @@ with tempfile.TemporaryDirectory() as td:
             if mode=='baseline' and name=='MonoDngPublicWriter1B.java':
                 source=here.parent/'monooutput1c'/name
             (target/name).write_bytes(source.read_bytes())
-        (target/'SaveLookupTest.java').write_bytes((here/'SaveLookupTest.java').read_bytes())
+        test_source=(here/'SaveLookupTest.java').read_text()
+        anchor='equal(props(name).getProperty("status"),wanted);'
+        assert test_source.count(anchor)==1
+        test_source=test_source.replace(anchor,
+            'Properties detail=props(name); if(!wanted.equals(detail.getProperty("status"))) '
+            'System.err.println("UNEXPECTED_JOB_STATE name="+name+" wanted="+wanted+" properties="+detail); '
+            'equal(detail.getProperty("status"),wanted);')
+        (target/'SaveLookupTest.java').write_text(test_source)
         subprocess.run(['javac','--release','17','-d',str(work/'classes')]+[str(p) for p in work.rglob('*.java')],check=True)
         run=subprocess.run(['java','-cp',str(work/'classes'),'com.particlesdevs.photoncamera.m9.export.SaveLookupTest',str(work/'fixtures'),mode],text=True,capture_output=True)
         print(run.stdout,end='');print(run.stderr,end='',file=sys.stderr);run.check_returncode()
