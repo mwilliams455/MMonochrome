@@ -122,7 +122,11 @@ public final class SaveLookupTest {
         try(Env e=new Env(base.resolve("unknown_uri"))) {
             e.stage("unknown");ContentResolver.failAfter=137;e.spool.pump();e.spool.close();
             Properties p=MonoDngSpool1B.loadProperties(e.job("unknown").resolve("job.properties"));
-            p.setProperty("publicTemporaryUri","content://mock.documents/document/nonexistent_opaque_id");
+            // A valid opaque URI whose provider metadata query returns no document.
+            // The mock registry must know the ID; the backing file deliberately does not exist.
+            Path missing=e.out.resolve("missing_provider_document");
+            yes(!Files.exists(missing));
+            p.setProperty("publicTemporaryUri",android.net.Uri.of(missing).toString());
             MonoDngSpool1B.saveProperties(e.job("unknown").resolve("job.properties"),p);
             reset();e.open();e.spool.pump();e.exported("unknown");
             equal(ContentResolver.childQueries,2);equal(DocumentFile.creates,0);
