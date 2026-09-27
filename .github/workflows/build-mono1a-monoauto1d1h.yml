@@ -40,12 +40,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Install DNG validation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check 'numpy==2.3.5' 'tifffile==2026.5.15'
+          python3 -c 'import numpy,tifffile; print("DNG validation:",numpy.__version__,tifffile.__version__)'
       - name: Replay MONOAUTO1D1G parent
         shell: bash
         run: |
           set -euo pipefail
           python3 -m py_compile apk/mono1a/monoauto1d1h/*.py
-          python3 -u - <<'PY' | tee MONOAUTO1D1H_PARENT.log
+          python3 -u - <<'PY' 2>&1 | tee MONOAUTO1D1H_PARENT.log
           from pathlib import Path
           import subprocess
           lines=Path('.github/workflows/build-mono1a-monoauto1d1g.yml').read_text().splitlines()
@@ -73,8 +79,8 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
-          python3 apk/mono1a/monoauto1d1h/apply.py "$ROOT" | tee MONOAUTO1D1H_APPLY.txt
-          python3 apk/mono1a/monoauto1d1h/test.py "$ROOT" | tee MONOAUTO1D1H_TESTS.txt
+          python3 -u apk/mono1a/monoauto1d1h/apply.py "$ROOT" 2>&1 | tee MONOAUTO1D1H_APPLY.txt
+          python3 -u apk/mono1a/monoauto1d1h/test.py "$ROOT" 2>&1 | tee MONOAUTO1D1H_TESTS.txt
       - name: Snapshot evidence
         shell: bash
         run: |
@@ -106,7 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY' | tee MONOAUTO1D1H_APK_PROOF.txt
+          python3 - <<'PY' 2>&1 | tee MONOAUTO1D1H_APK_PROOF.txt
           from pathlib import Path
           import zipfile,hashlib,shutil,json
           root=Path('m9base/PhotonCamera')
