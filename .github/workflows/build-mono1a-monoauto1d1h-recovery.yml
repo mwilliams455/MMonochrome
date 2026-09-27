@@ -1,0 +1,164 @@
+name: Build Monochrome 1H Save Lookup Recovery
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/monoauto1d1h-savelookup1a]
+    paths:
+      - '.github/workflows/build-mono1a-monoauto1d1h-recovery.yml'
+      - 'apk/mono1a/monoauto1d1h/**'
+permissions:
+  contents: read
+concurrency:
+  group: mono-save-lookup-recovery-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+      - name: Checkout frozen scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+      - name: Checkout pinned portability
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Assemble verified 1G parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee RECOVERY_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monoauto1d1g.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1; continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-save-recovery-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True,timeout=900)
+          assert count==3,count
+          PY
+      - name: Save exact parent evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery-evidence/parent
+          cp -r apk/mono1a/monoauto1d1h recovery-evidence/overlay
+          cp -r apk/mono1a/monooutput1c recovery-evidence/parent-overlay1c
+          cp -r m9base/PhotonCamera/app/src/main/java/com/particlesdevs/photoncamera/m9/export recovery-evidence/parent/export
+          git rev-parse HEAD > recovery-evidence/COMMIT.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json
+          r=Path('m9base/PhotonCamera')
+          h={str(p.relative_to(r)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (r/'app/src').rglob('*') if p.is_file()}
+          Path('recovery-evidence/PARENT_SOURCE_HASHES.json').write_text(json.dumps(h,indent=2))
+          PY
+      - name: Apply 1H candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u apk/mono1a/monoauto1d1h/apply.py "$GITHUB_WORKSPACE/m9base/PhotonCamera" 2>&1 | tee RECOVERY_APPLY.log
+      - name: Test actual 1H publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u apk/mono1a/monoauto1d1h/test.py "$GITHUB_WORKSPACE/m9base/PhotonCamera" 2>&1 | tee RECOVERY_TEST.log
+      - name: Snapshot generated sources even on failure
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p recovery-evidence/candidate
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          if [ -d "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/export" ]; then
+            cp -r "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/export" recovery-evidence/candidate/export
+          fi
+          find "$ROOT" -maxdepth 1 -type f -name '*ISOLATION.json' -exec cp '{}' recovery-evidence/ ';' || true
+          find "$ROOT" -maxdepth 1 -type f -name '*TEST_REPORT.json' -exec cp '{}' recovery-evidence/ ';' || true
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'cmake;3.22.1' 'ndk;27.0.12077973'
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/RECOVERY_GRADLE.log"
+      - name: Verify APK and unchanged photographic files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee RECOVERY_APK_PROOF.log
+          from pathlib import Path
+          import hashlib,json,zipfile,shutil
+          r=Path('m9base/PhotonCamera')
+          before=json.loads(Path('recovery-evidence/PARENT_SOURCE_HASHES.json').read_text())
+          after={str(p.relative_to(r)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (r/'app/src').rglob('*') if p.is_file()}
+          changed=[k for k in sorted(set(before)|set(after)) if before.get(k)!=after.get(k)]
+          allowed='app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngPublicWriter1B.java'
+          assert changed==[allowed],changed
+          proof=json.loads((r/'MONOSAVELOOKUP1A_TEST_REPORT.json').read_text())
+          assert proof['status']=='PASS'
+          assert proof['byteIdenticalDngWriterOutput'] is True
+          assert proof['photographicSettingsChanged'] is False
+          apks=list((r/'app/build/outputs/apk/debug').glob('*.apk')); assert len(apks)==1,apks
+          with zipfile.ZipFile(apks[0]) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [b'MONOOUTPUT1H_SAVELOOKUP1A',b'publicInitialQuerySkipped',b'publicLookupParentUri1H',b'MONOOUTPUT1G_RECEIPTHYGIENE1A',b'MONOAUTO1D_PLACEMENTASSIST1E_BUFFERHYGIENE1A']:
+                  assert marker in dex,marker
+          out=Path('MMonochrome_MONOAUTO1D_PLACEMENTASSIST1H_SAVELOOKUP1A.apk')
+          shutil.copyfile(apks[0],out)
+          sha=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('RECOVERY_APK_SHA256.txt').write_text(sha+'  '+out.name+'\n')
+          print('PASS: only publication transport changed; all other',len(before)-1,'runtime source files frozen')
+          print(sha,out.stat().st_size)
+          PY
+      - name: Upload complete evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-1H-RECOVERY-EVIDENCE
+          path: |
+            RECOVERY_*.log
+            RECOVERY_*.txt
+            recovery-evidence/
+          if-no-files-found: error
+      - name: Upload validated APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-1H-SAVELOOKUP1A
+          path: |
+            MMonochrome_MONOAUTO1D_PLACEMENTASSIST1H_SAVELOOKUP1A.apk
+            RECOVERY_APK_SHA256.txt
+            RECOVERY_APK_PROOF.log
+          if-no-files-found: error
