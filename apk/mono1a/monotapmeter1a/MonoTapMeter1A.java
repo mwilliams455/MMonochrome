@@ -152,7 +152,7 @@ public final class MonoTapMeter1A {
         return new int[]{x0,y0,x1,y1};
     }
 
-    private static JSONArray array(double... values) {
+    private static JSONArray array(double... values) throws JSONException {
         JSONArray out=new JSONArray();for(double v:values)out.put(v);return out;
     }
 }
