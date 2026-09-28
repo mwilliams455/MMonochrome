@@ -105,6 +105,15 @@ public final class MonoTapMeter1A {
 
     public static synchronized long epoch() { return serial; }
 
+    /**
+     * Exposure-plan identity token. Calling this also performs the 15-second
+     * expiry check, so an expired selection cannot leave its old plan eligible.
+     */
+    public static synchronized long controlEpoch(long now) {
+        selection(now);
+        return serial;
+    }
+
     public static synchronized void clear(String reason) {
         if(selected!=null){selected=null;serial++;}
         status="AUTO";
