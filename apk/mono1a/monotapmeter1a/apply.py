@@ -10,6 +10,7 @@ J=root/'app/src/main/java/com/particlesdevs/photoncamera'
 paths={
  'swipe':J/'control/Swipe.java',
  'focus':J/'control/TouchFocus.java',
+ 'capture':J/'capture/CaptureController.java',
  'camera':J/'ui/camera/CameraFragment.java',
  'gl':J/'ui/camera/views/viewfinder/GLPreview.java',
  'renderer':J/'ui/camera/views/viewfinder/MainRenderer.java',
@@ -27,6 +28,7 @@ if paths['tap'].exists(): raise SystemExit('MONOTAPMETER1A helper already exists
 EXPECTED={
  'control/Swipe.java':'051b1d5a22602a7d48e1697aa3170ed3a0828f22f6666cb97c4cf3106a82bd9d',
  'control/TouchFocus.java':'f0d458d4fb9f59a11c4e19db02c8695a13ed0b0ce45edd6b7286a722f54a562c',
+ 'capture/CaptureController.java':'ed02fbf45e26cecdcc0b905faaa175eeebf4d8ef6da46ac5ee0cc7ade545f115',
  'ui/camera/CameraFragment.java':'f26d4924746173bb311f34b485b9c010f85efc0afb7d3207585ed4661a218711',
  'ui/camera/views/viewfinder/GLPreview.java':'45c05c69616c9ddd3b4291a306a21b3919cb8f6e3e1eb9886192ecda30e3cb77',
  'ui/camera/views/viewfinder/MainRenderer.java':'5397258bd978068fe8452735a788cffa04f139fe0eb7322f062b22f6726736fb',
@@ -137,6 +139,28 @@ s=one(s,
         focusCircleView.removeCallbacks(hideFocusCircleRunnable);
 ''','TouchFocus clear selection')
 paths['focus'].write_text(s)
+
+# A tap generation is part of the exposure-plan control identity. This closes
+# the select/replace/clear/expiry race without changing no-tap exposure math.
+s=paths['capture'].read_text()
+s=one(s,
+'''        if(mPreviewRequestBuilder!=null) {
+            metering+="|"+mPreviewRequestBuilder.get(CaptureRequest.SCALER_CROP_REGION);
+            metering+="|"+java.util.Arrays.toString(mPreviewRequestBuilder.get(CaptureRequest.CONTROL_AE_REGIONS));
+            if(Build.VERSION.SDK_INT>=30) metering+="|"+mPreviewRequestBuilder.get(CaptureRequest.CONTROL_ZOOM_RATIO);
+        }
+        return new MonoExposurePlan1A.Controls(PhotonCamera.getSettings().selectedMode.name(),
+''',
+'''        if(mPreviewRequestBuilder!=null) {
+            metering+="|"+mPreviewRequestBuilder.get(CaptureRequest.SCALER_CROP_REGION);
+            metering+="|"+java.util.Arrays.toString(mPreviewRequestBuilder.get(CaptureRequest.CONTROL_AE_REGIONS));
+            if(Build.VERSION.SDK_INT>=30) metering+="|"+mPreviewRequestBuilder.get(CaptureRequest.CONTROL_ZOOM_RATIO);
+        }
+        metering+="|monoTapEpoch="+com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A
+                .controlEpoch(SystemClock.elapsedRealtimeNanos());
+        return new MonoExposurePlan1A.Controls(PhotonCamera.getSettings().selectedMode.name(),
+''','capture tap generation control identity')
+paths['capture'].write_text(s)
 
 s=paths['gl'].read_text()
 s=one(s,
@@ -526,7 +550,7 @@ paths['selector'].write_text(s)
 
 g=paths['gradle'].read_text();m=re.search(r"versionName\s+'([^']+)'",g)
 if not m:raise SystemExit('versionName missing')
-g=g[:m.start(1)]+m.group(1)+'-monotapmeter1a-lowkeyread1a'+g[m.end(1):]
+g=g[:m.start(1)]+m.group(1)+'-monotapmeter1b-lowkeyread1a-intentboundary1a'+g[m.end(1):]
 paths['gradle'].write_text(g)
 
 auto_method_after=java_method(paths['assist'].read_text(),'    public static Decision evaluate(boolean eligible,')
@@ -538,7 +562,7 @@ if frozen_before!=frozen_after:
     raise SystemExit('MONOTAPMETER1A frozen photographic seam changed: '+repr([k for k in frozen_before if frozen_before[k]!=frozen_after.get(k)]))
 
 proof={
- 'revision':'MONOTAPMETER1A_LOWKEYREAD1A',
+ 'revision':'MONOTAPMETER1B_LOWKEYREAD1A_INTENTBOUNDARY1A',
  'parent':'MONOOUTPUT1H_SAVELOOKUP1A / MONOAUTO1D_PLACEMENTASSIST1E_BUFFERHYGIENE1A',
  'selectionLifetimeSeconds':15,
  'tapPositiveOnly':True,
@@ -555,10 +579,12 @@ proof={
  'HDR':False,'localRelighting':False,'postCaptureRescue':False,
  'measurementMaxAgeMs':750,'measurementInvalidatedByExisting1EShutterBoundary':True,
  'selectionRetainedAcrossShutter':True,
+ 'tapGenerationInExposureControlIdentity':True,
+ 'selectionReplaceClearExpiryInvalidateOldPlanEligibility':True,
  'noTapAutomaticPolicyMethodByteIdentical':True,
  'rendererChanged':False,'dngPixelMathChanged':False,'curve02Changed':False,
  'frozen':frozen_after,
- 'runtimeChanged':[str(paths[k].relative_to(root)) for k in ['swipe','focus','camera','gl','renderer','overlay','selector','assist','gpu','tap']],
+ 'runtimeChanged':[str(paths[k].relative_to(root)) for k in ['swipe','focus','capture','camera','gl','renderer','overlay','selector','assist','gpu','tap']],
 }
 (root/'MONOTAPMETER1A_ISOLATION.json').write_text(json.dumps(proof,indent=2)+'\n')
 print(json.dumps(proof,indent=2))
