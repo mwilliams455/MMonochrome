@@ -1,4 +1,4 @@
-name: Build MMonochrome MONOTAPMETER1A Low-Key Tap Exposure
+name: Build MMonochrome MONOTAPMETER1B Low-Key Tap Exposure + Intent Boundary
 
 on:
   workflow_dispatch:
@@ -96,6 +96,7 @@ jobs:
           files=(
             app/src/main/java/com/particlesdevs/photoncamera/control/Swipe.java
             app/src/main/java/com/particlesdevs/photoncamera/control/TouchFocus.java
+            app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java
             app/src/main/java/com/particlesdevs/photoncamera/ui/camera/CameraFragment.java
             app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/GLPreview.java
             app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/MainRenderer.java
@@ -106,7 +107,7 @@ jobs:
             app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoTapMeter1A.java
           )
           for f in "${files[@]}";do mkdir -p "$OUT/source/$(dirname "$f")";cp "$ROOT/$f" "$OUT/source/$f";done
-          printf 'REVISION=MONOTAPMETER1A_LOWKEYREAD1A\nCOMMIT=%s\nPARENT=8b9d7ade66c9772c654b8efb51a93768d312bfb7\nTAP_MEDIAN_FLOOR_SOURCE1D=0.050\nTAP_Q25_FLOOR_SOURCE1D=0.015\nTAP_MEDIAN_APPEARANCE_CEILING_SOURCE1D=0.065\nTAP_MAX_POSITIVE_EV=0.40\nNO_TAP_POLICY_CHANGED=0\nHDR=0\nLOCAL_RELIGHTING=0\n' "$GITHUB_SHA" > "$OUT/PROVENANCE.txt"
+          printf 'REVISION=MONOTAPMETER1B_LOWKEYREAD1A_INTENTBOUNDARY1A\nCOMMIT=%s\nPARENT=8b9d7ade66c9772c654b8efb51a93768d312bfb7\nTAP_MEDIAN_FLOOR_SOURCE1D=0.050\nTAP_Q25_FLOOR_SOURCE1D=0.015\nTAP_MEDIAN_APPEARANCE_CEILING_SOURCE1D=0.065\nTAP_MAX_POSITIVE_EV=0.40\nNO_TAP_POLICY_CHANGED=0\nHDR=0\nLOCAL_RELIGHTING=0\n' "$GITHUB_SHA" > "$OUT/PROVENANCE.txt"
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -132,7 +133,7 @@ jobs:
           root=Path('m9base/PhotonCamera');apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'));assert len(apks)==1
           with zipfile.ZipFile(apks[0]) as z:
               dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
-              for marker in [b'MONOTAPMETER1A',b'MONOTAPMETER1A_LOWKEYREAD1A',b'monotap1a_bounded_subject_readability_lift',
+              for marker in [b'MONOTAPMETER1A',b'MONOTAPMETER1A_LOWKEYREAD1A',b'monotap1a_bounded_subject_readability_lift',b'monoTapEpoch=',
                   b'MONOAUTO1D_PLACEMENTASSIST1E_BUFFERHYGIENE1A',b'MONOOUTPUT1H_SAVELOOKUP1A',b'MONOOUTPUT1E_BASELINE_IFD0']:
                   assert marker in dex,marker
           proof=json.loads((root/'MONOTAPMETER1A_ISOLATION.json').read_text())
@@ -141,15 +142,16 @@ jobs:
           assert proof['noTapAutomaticPolicyMethodByteIdentical']
           assert not proof['rendererChanged'] and not proof['dngPixelMathChanged'] and not proof['curve02Changed']
           assert proof['tapPositiveOnly'] and not proof['HDR'] and not proof['localRelighting']
-          out=Path('MMonochrome_MONOTAPMETER1A_LOWKEYREAD1A.apk');shutil.copyfile(apks[0],out)
+          assert proof['tapGenerationInExposureControlIdentity'] and proof['selectionReplaceClearExpiryInvalidateOldPlanEligibility']
+          out=Path('MMonochrome_MONOTAPMETER1B_LOWKEYREAD1A_INTENTBOUNDARY1A.apk');shutil.copyfile(apks[0],out)
           digest=hashlib.sha256(out.read_bytes()).hexdigest();Path('MONOTAPMETER1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
-          print('PASS MONOTAPMETER1A package',digest,out.stat().st_size)
+          print('PASS MONOTAPMETER1B package',digest,out.stat().st_size)
           PY
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-MONOTAPMETER1A-LOWKEYREAD1A-EVIDENCE
+          name: MMonochrome-MONOTAPMETER1B-LOWKEYREAD1A-INTENTBOUNDARY1A-EVIDENCE
           path: |
             MONOTAPMETER1A_*.log
             MONOTAPMETER1A_*.txt
@@ -159,9 +161,9 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-MONOTAPMETER1A-LOWKEYREAD1A
+          name: MMonochrome-MONOTAPMETER1B-LOWKEYREAD1A-INTENTBOUNDARY1A
           path: |
-            MMonochrome_MONOTAPMETER1A_LOWKEYREAD1A.apk
+            MMonochrome_MONOTAPMETER1B_LOWKEYREAD1A_INTENTBOUNDARY1A.apk
             MONOTAPMETER1A_APK_SHA256.txt
             MONOTAPMETER1A_APK_PROOF.txt
             monotapmeter1a-evidence/PROVENANCE.txt
