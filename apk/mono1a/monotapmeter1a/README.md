@@ -1,4 +1,4 @@
-# MONOTAPMETER1A_LOWKEYREAD1A
+# MONOTAPMETER1B_LOWKEYREAD1A_INTENTBOUNDARY1A
 
 Parent: validated `research/monoauto1d1h-savelookup1a` head `8b9d7ade66c9772c654b8efb51a93768d312bfb7`.
 
@@ -36,6 +36,8 @@ No HDR, local relighting, post-capture rescue, or second exposure system is intr
 ## Freshness / successive capture
 
 Selection may survive a shutter, but its measurement may not. The existing 1E shutter boundary is reused: a tap measurement at or before the last shutter is rejected, as are measurements older than 750 ms or from another selection generation/camera/session. A fresh post-shutter probe is required for the next photograph.
+
+The tap selection generation is also included in the exposure-plan control identity. Selecting, replacing, clearing, or expiring a tap therefore invalidates any previously published plan before the shutter can reuse it. This closes the short pre-tap/stale-tap plan race while leaving the no-tap exposure mathematics unchanged.
 
 ## Viewfinder
 
