@@ -5,10 +5,11 @@ import json, math, re, sys
 if len(sys.argv)!=2: raise SystemExit('usage: test.py <PhotonCamera-root>')
 root=Path(sys.argv[1]).resolve();J=root/'app/src/main/java/com/particlesdevs/photoncamera'
 proof=json.loads((root/'MONOTAPMETER1A_ISOLATION.json').read_text())
-assert proof['revision']=='MONOTAPMETER1A_LOWKEYREAD1A'
+assert proof['revision']=='MONOTAPMETER1B_LOWKEYREAD1A_INTENTBOUNDARY1A'
 assert proof['noTapAutomaticPolicyMethodByteIdentical']
 assert proof['tapPositiveOnly'] and not proof['HDR'] and not proof['localRelighting'] and not proof['postCaptureRescue']
 assert proof['selectionRetainedAcrossShutter'] and proof['measurementInvalidatedByExisting1EShutterBoundary']
+assert proof['tapGenerationInExposureControlIdentity'] and proof['selectionReplaceClearExpiryInvalidateOldPlanEligibility']
 
 assist=(J/'m9/exposure/MonoPlacementAssist1D.java').read_text()
 gpu=(J/'m9/preview/MonoGpuPreview2A.java').read_text()
@@ -16,6 +17,7 @@ selector=(J/'processing/parameters/IsoExpoSelector.java').read_text()
 helper=(J/'m9/preview/MonoTapMeter1A.java').read_text()
 focus=(J/'control/TouchFocus.java').read_text()
 renderer=(J/'ui/camera/views/viewfinder/MainRenderer.java').read_text()
+capture=(J/'capture/CaptureController.java').read_text()
 
 for marker in [
  'MONOTAPMETER1A_LOWKEYREAD1A','TAP_MEDIAN_FLOOR_SOURCE1D = 0.050',
@@ -31,6 +33,8 @@ assert 'if(tap1A!=null)' in selector and 'M9M10rMfmTest1A.evaluateForMonoPlan1A'
 assert 'processMonoTap1A' in focus and 'new MeteringRectangle(0,0,0,0,0)' in focus
 assert 'MonoTapMeter1A.configure' in renderer
 assert 'LIFETIME_NS=15_000_000_000L' in helper
+assert 'controlEpoch(long now)' in helper and 'selection(now);' in helper
+assert 'monoTapEpoch=' in capture and 'MonoTapMeter1A' in capture and '.controlEpoch(SystemClock.elapsedRealtimeNanos())' in capture
 
 MED=0.050;Q25=0.015;CEIL=0.065;MAX_EV=.40;DEAD=.08;Q998_LIMIT=.92;BROAD=250/255;CLIP=.005
 
@@ -83,12 +87,13 @@ assert landscape and landscape[1]>24,landscape
 center=map_rect(540,960,1080,1920,0,0,1080,1920,48,64);assert center and center[0]<24<center[2] and center[1]<32<center[3]
 
 report={
- 'revision':'MONOTAPMETER1A_LOWKEYREAD1A_TEST',
+ 'revision':'MONOTAPMETER1B_LOWKEYREAD1A_INTENTBOUNDARY1A_TEST',
  'policy':{'alreadyReadable':a,'modestlyDark':b,'blackObject':c,'q25Starved':d,'highlightLimited':e,'broadTail':f},
  'curve02Codes':curve_codes,'coordinatePortrait':portrait,'coordinateLandscape':landscape,'coordinateCenter':center,
  'checks':{
    'positiveOnly':True,'noTapPolicyBodyPreserved':True,'generationMatchRequired':True,
-   'freshPostShutterMeasurementRequired':True,'manualAuthorityPreserved':True,
+   'freshPostShutterMeasurementRequired':True,'tapLifecycleInvalidatesOldPlanEligibility':True,
+   'manualAuthorityPreserved':True,
    'rendererAndDngFrozenByApplyProof':True,'oneGlobalExposure':True
  }
 }
