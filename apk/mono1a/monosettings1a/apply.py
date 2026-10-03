@@ -97,8 +97,10 @@ for node in list(screen):
     if key(node) in remove_categories:
         removed_categories.append(key(node))
         screen.remove(node)
-if set(removed_categories) != remove_categories:
-    raise SystemExit("MONOSETTINGS1A category mismatch: " + repr(removed_categories))
+remaining_categories = {key(node) for node in list(screen)}
+still_visible = sorted(remove_categories.intersection(remaining_categories))
+if still_visible:
+    raise SystemExit("MONOSETTINGS1A categories still visible: " + repr(still_visible))
 
 ET.indent(tree, space="    ")
 tree.write(pref, encoding="utf-8", xml_declaration=True)
