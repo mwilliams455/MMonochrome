@@ -335,6 +335,10 @@ hud.write_text(s)
 # ----- CameraFragment sampling ------------------------------------------------
 s=fragment.read_text()
 s=one(s,
+"import android.graphics.Bitmap;\n",
+"import android.graphics.Bitmap;\nimport android.graphics.Color;\n",
+"fragment Color import")
+s=one(s,
 "import java.util.concurrent.Future;\n",
 "import java.util.concurrent.Future;\nimport java.util.concurrent.atomic.AtomicBoolean;\n",
 "fragment AtomicBoolean import")
