@@ -19,13 +19,21 @@ assert not proof["genericPhotonContrastUsed"]
 assert not proof["sharpnessChanged"]
 assert not proof["toningChanged"]
 
-bank = (root / "app/src/main/assets/mono/mono_contrast_curves.bin").read_bytes()
-assert len(bank) == 10240
-curves = [bank[i*2048:(i+1)*2048] for i in range(5)]
-assert len({hashlib.sha256(x).hexdigest() for x in curves}) == 5
-assert hashlib.sha256(curves[2]).hexdigest() == "7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752"
-for curve in curves:
-    assert all(curve[i] <= curve[i+1] for i in range(2047))
+# The exact firmware-derived bank is deliberately absent from Git/source builds.
+bank_path = root / "app/src/main/assets/mono/mono_contrast_curves.bin"
+assert not bank_path.exists(), "firmware-derived Contrast bank must be post-packed, not stored in Git"
+meta = (root / "app/src/main/java/com/particlesdevs/photoncamera/m9/render/MonoContrastCurves1A.java").read_text()
+for marker in [
+    'BANK_SHA256 = "ac010ac0a107fb4b98ed817f24b4b9ab2d739fcfd70571b4f7d8375335e293c6"',
+    '"b836ab85030a67633bbd3d0b4f7cc7b238e288b33f8b30ef41c51339538f9a94"',
+    '"b76e1faf8016b6667415e4d1b7b8c12853763dacc764ec1fa4f7371cd08e7773"',
+    '"7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752"',
+    '"68a8ac917fa13bb6ca030a436a42b8fd588561e0fc2ca032470d27ea36432c97"',
+    '"d26670886bdbbaa2e61fe0696d523b2e8dedd8476b75301bbd3c9049106671fb"',
+    'ASSET = "mono/mono_contrast_curves.bin"',
+    "loadCurve(int selector)",
+]:
+    assert marker in meta, marker
 
 ANDROID="http://schemas.android.com/apk/res/android"
 akey="{"+ANDROID+"}key"
@@ -60,10 +68,10 @@ assert "double representationScale, int contrastSelector," in n
 
 c=(root/"app/src/main/cpp/m9color_jni.cpp").read_text()
 for marker in [
-    '#include "mm_monochrom_contrast_curves.inc"',
-    "jint contrastSelector, jlongArray statsArray",
-    "const uint8_t* contrastCurve=MM_MONO_CONTRAST_CURVES[monoContrast];",
-    "const uint8_t yy=contrastCurve[idx]",
+    "jbyteArray contrastCurveArray, jlongArray statsArray",
+    "MONO1A Contrast curve must be 2048 bytes",
+    "GetByteArrayRegion(contrastCurveArray,0,2048",
+    "const uint8_t yy=contrastCurve[static_cast<size_t>(idx)]",
 ]:
     assert marker in c, marker
 
@@ -77,7 +85,7 @@ for marker in [
 
 m=(root/"app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/MainRenderer.java").read_text()
 for marker in [
-    "mono_contrast_curves.bin",
+    "MonoContrastCurves1A.ASSET",
     "getMonoContrastValue()",
     "MonoContrastCurves1A.BANK_SHA256",
     "MonoContrastCurves1A.SHA256[selectedContrast1A]",
@@ -101,7 +109,8 @@ for rel in must_freeze:
 report={
     "revision":"LEICACONTRAST1A_TEST",
     "status":"PASS",
-    "fiveFirmwareCurves":True,
+    "fiveFirmwareCurvesMetadata":True,
+    "curveBankPostPackRequired":True,
     "standardIsCurve02":True,
     "jpegAndPreviewShareSelection":True,
     "dngAndExposureFrozen":True,
