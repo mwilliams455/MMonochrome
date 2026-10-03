@@ -77,7 +77,7 @@ if any(n.attrib.get(akey)=="@string/pref_mono_sharpness_key" for n in list(cat))
 sharp=ET.Element("ListPreference",{
     "{"+ANDROID+"}layout":"@layout/preference_with_margin",akey:"@string/pref_mono_sharpness_key",
     "{"+ANDROID+"}title":"@string/mono_sharpness","{"+ANDROID+"}summary":"@string/mono_sharpness_summary",
-    "{"+ANDROID+"}icon":"@drawable/ic_sharpness","{"+ANDROID+"}entries":"@array/mono_sharpness_entries",
+    "{"+ANDROID+"}icon":"@drawable/ic_gradient_black_24dp","{"+ANDROID+"}entries":"@array/mono_sharpness_entries",
     "{"+ANDROID+"}entryValues":"@array/mono_sharpness_entryvalues","{"+ANDROID+"}defaultValue":"2",
     "{"+APP+"}useSimpleSummaryProvider":"true"})
 children=list(cat)
