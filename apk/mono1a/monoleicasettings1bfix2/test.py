@@ -21,6 +21,7 @@ R=(root/"app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Rendere
 for marker in [
     'source1dXyzY.put("photographicOutputSelected", true)',
     'd.put("monochromPrimarySource", "SOURCE1D_NATIVE_DNG_XYZ_Y")',
+    'boolean equalRgbOk = M9NativeColorCore.renderMonochrome1AWeightedDirectBitmap(',
 ]:
     assert marker in R,marker
 
