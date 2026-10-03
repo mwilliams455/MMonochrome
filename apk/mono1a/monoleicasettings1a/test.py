@@ -93,7 +93,7 @@ for marker in [
     assert marker in m, marker
 
 # DNG and exposure policy must remain byte-identical to the validated modern parent.
-frozen=json.loads((Path(__file__).resolve().parents[2]/"upstream1b"/"frozen_monochrome.json").read_text())
+frozen=json.loads((Path(__file__).resolve().parents[1]/"upstream1b"/"frozen_monochrome.json").read_text())
 must_freeze=[
     "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngExport1A.java",
     "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngWriter1A.java",
