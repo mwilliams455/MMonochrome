@@ -246,7 +246,8 @@ jobs:
               dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
               assert b'MonoContrastCurves1A' in dex
               assert b'MonoToning1A' in dex
-              assert b'LEICATONING1A_FIX1' in dex
+              assert b'installVerifiedBank' in dex
+              assert b'loadCurveOrNull' in dex
               assert b'Selenium Strong' in dex
               names=set(z.namelist())
               assert 'assets/mono/mono_contrast_curves.bin' not in names
