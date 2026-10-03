@@ -77,10 +77,10 @@ jobs:
           set -uo pipefail
           PIN=4ee108e169496f429c0afa0cc33e57bb6b2ec724
           BASE=$(sed -n 's/^OLD_PHOTON_BASE=//p' REBASE_BASE.txt)
-          git clone --no-checkout --filter=blob:none https://github.com/eszdman/PhotonCamera.git PhotonModern
-          git -C PhotonModern fetch --depth=1 origin "$PIN"
+          git clone --no-checkout https://github.com/eszdman/PhotonCamera.git PhotonModern
           git -C PhotonModern checkout --detach "$PIN"
-          git -C PhotonModern fetch --depth=1 origin "$BASE" || true
+          git -C PhotonModern cat-file -e "$BASE^{commit}"
+          git -C PhotonModern cat-file -e "$BASE^{tree}"
           set +e
           git -C PhotonModern apply --3way --binary "$GITHUB_WORKSPACE/mono-current.patch" > REBASE_APPLY.log 2>&1
           RC=$?
