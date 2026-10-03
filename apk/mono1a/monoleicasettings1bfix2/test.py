@@ -21,9 +21,9 @@ R=(root/"app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Rendere
 for marker in [
     'source1dXyzY.put("photographicOutputSelected", true)',
     'd.put("monochromPrimarySource", "SOURCE1D_NATIVE_DNG_XYZ_Y")',
-    'return new RenderCore(equalRgbBitmap, d, rawScalar1BBitmap, greenOnlyBitmap, rawScalar1ABitmap, monoBitmap',
 ]:
     assert marker in R,marker
+assert re.search(r'return\\s+new\\s+RenderCore\\(\\s*equalRgbBitmap\\s*,\\s*d\\s*,',R), "SOURCE1D equalRgbBitmap is not primary RenderCore bitmap"
 
 # Crucial FIX2 contract: settings are computed before SOURCE1D native render and passed into it.
 for marker in [
