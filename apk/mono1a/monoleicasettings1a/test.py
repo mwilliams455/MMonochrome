@@ -56,15 +56,15 @@ for marker in [
 r=(root/"app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java").read_text()
 for marker in [
     "getMonoContrastValue()",
-    "MonoContrastCurves1A.DEFAULT, rawScalar1AStats",
-    "monoContrast1A, rawScalar1BStats",
+    "monoStandardCurve1A, rawScalar1AStats",
+    "monoSelectedCurve1A, rawScalar1BStats",
     'rawScalar1B.put("contrastEnum", monoContrast1A)',
     'd.put("monochromContrastCurveSha256", MonoContrastCurves1A.SHA256[monoContrast1A])',
 ]:
     assert marker in r, marker
 
 n=(root/"app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java").read_text()
-assert "double representationScale, int contrastSelector," in n
+assert "double representationScale, byte[] contrastCurve," in n
 
 c=(root/"app/src/main/cpp/m9color_jni.cpp").read_text()
 for marker in [
