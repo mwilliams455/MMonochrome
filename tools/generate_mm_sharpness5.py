@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Generate exact five-level Leica M Monochrom 1.022 sharpness tables.
+"""Generate exact Leica M Monochrom 1.022 sharpness source bank + selector matrix.
 
 Firmware bytes are consumed only during CI. The repository stores no Leica LUT
-payload. Output:
-- C++ premodified tables for the full-resolution SOURCE1D still renderer.
-- A compact little-endian int16 asset for the GL preview.
-- Java metadata containing menu/ISO/code mapping and asset identity.
+payload. Runtime code reproduces Leica's modifier arithmetic from the original
+16-row base bank rather than embedding 80 pre-scaled approximations.
 """
 from __future__ import annotations
 import argparse,hashlib,json,pathlib,struct,sys
@@ -83,27 +81,19 @@ def main():
         list(struct.unpack_from("<"+"h"*COUNT,bank,i*ROW_BYTES))
         for i in range(ISO_COUNT)
     ]
-    tables=[]
-    for selector in range(SELECTORS):
-        tables.append([scale(raw_rows[i],codes[selector][i]) for i in range(ISO_COUNT)])
 
-    # Asset layout: selector-major, ISO-major, 2050 signed little-endian int16.
-    asset=bytearray()
-    for selector in range(SELECTORS):
-        for iso in range(ISO_COUNT):
-            asset.extend(struct.pack("<"+"h"*COUNT,*tables[selector][iso]))
-    asset=bytes(asset)
-    expected_size=SELECTORS*ISO_COUNT*COUNT*2
-    if len(asset)!=expected_size: raise SystemExit("sharpness asset size mismatch")
+    # Asset is the canonical unmodified 16-row source bank, byte-for-byte.
+    asset=bank
+    if len(asset)!=ISO_COUNT*COUNT*2: raise SystemExit("sharpness asset size mismatch")
     asset_sha=sha(asset)
+    if asset_sha!=BANK_SHA: raise SystemExit("sharpness asset identity mismatch")
     a.asset_out.parent.mkdir(parents=True,exist_ok=True)
     a.asset_out.write_bytes(asset)
 
     a.cpp_out.parent.mkdir(parents=True,exist_ok=True)
     lines=[
       "// GENERATED from hash-verified Leica M Monochrom 1.022; do not edit.",
-      "// Source bank SHA256: "+BANK_SHA,
-      "// Preview/still premodified asset SHA256: "+asset_sha,
+      "// Canonical source bank SHA256: "+BANK_SHA,
       "#pragma once",
       "#include <cstdint>",
       "static constexpr int MM_MONO_SHARP_SELECTOR_COUNT = 5;",
@@ -115,14 +105,11 @@ def main():
     ]
     for row in codes: lines.append("  {"+",".join(map(str,row))+"},")
     lines.append("};")
-    lines.append("static constexpr int16_t MM_MONO_SHARP_LUT[5][16][2050] = {")
-    for selector in range(SELECTORS):
-        lines.append(" { // "+LABELS[selector])
-        for iso,row in enumerate(tables[selector]):
-            lines.append("  { // ISO %d code %d"%(ISOS[iso],codes[selector][iso]))
-            for j in range(0,COUNT,32):
-                lines.append("    "+",".join(map(str,row[j:j+32]))+",")
-            lines.append("  },")
+    lines.append("static constexpr int16_t MM_MONO_SHARP_BASE[16][2050] = {")
+    for iso,row in enumerate(raw_rows):
+        lines.append(" { // ISO %d"%ISOS[iso])
+        for j in range(0,COUNT,32):
+            lines.append("   "+",".join(map(str,row[j:j+32]))+",")
         lines.append(" },")
     lines.append("};")
     a.cpp_out.write_text("\n".join(lines)+"\n")
@@ -173,10 +160,12 @@ public final class MonoSharpness1C {{
       "sourceBankSha256":BANK_SHA,
       "assetSha256":asset_sha,
       "assetBytes":len(asset),
+      "assetRole":"canonical_unmodified_16x2050_int16_source_bank",
       "labels":LABELS,
       "isos":ISOS,
       "codes":codes,
       "border":2,
+      "modifier":"exact_firmware_integer_scale_and_signed_clamp_at_runtime",
       "kernel":"two_stage_integer_[1,2,1]/4_then_centered_detail_LUT",
       "firmwareBytesCommitted":False,
     }
