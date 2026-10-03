@@ -250,6 +250,13 @@ plan.write_text(s)
 
 # ---- CaptureController series coordinator ----------------------------------
 s=capture.read_text()
+# Parent shared-plan imports are already present; add the bracketing helper beside them.
+s=one(s,
+'''import com.particlesdevs.photoncamera.m9.exposure.MonoExposureDiagnostics1A;
+''',
+'''import com.particlesdevs.photoncamera.m9.exposure.MonoExposureDiagnostics1A;
+import com.particlesdevs.photoncamera.m9.exposure.MonoBracket1H;
+''',"bracket helper import")
 field_anchor='''    private volatile boolean monoAeLock1F;
     private MonoExposurePlan1A monoAeLockSourcePlan1F;
     private MonoExposurePlan1A.Controls monoAeLockControls1F;
