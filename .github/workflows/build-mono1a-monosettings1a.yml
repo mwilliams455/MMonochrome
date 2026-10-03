@@ -78,7 +78,7 @@ jobs:
               p=Path('/tmp/monosettings-parent-%d.sh'%count)
               p.write_text('\n'.join(block)+'\n')
               subprocess.run(['bash',str(p)],check=True)
-          assert count==3,count
+          assert count==4,count
           print('MONOTAPMETER1B parent assembly/tests PASS')
           PY
 
