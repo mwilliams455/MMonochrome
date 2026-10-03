@@ -26,6 +26,22 @@ for p in required:
     if not p.is_file():
         raise SystemExit("LEICACONTRAST1A missing " + str(p))
 
+def sha_file(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+frozen_policy_paths = [
+    root / "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngExport1A.java",
+    root / "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngWriter1A.java",
+    root / "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoLinearPlane1A.java",
+    root / "app/src/main/java/com/particlesdevs/photoncamera/m9/exposure/MonoPlacementAssist1D.java",
+    root / "app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoTapMeter1A.java",
+    root / "app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java",
+]
+for p in frozen_policy_paths:
+    if not p.is_file():
+        raise SystemExit("LEICACONTRAST1A frozen policy file missing " + str(p))
+frozen_policy_before = {str(p.relative_to(root)): sha_file(p) for p in frozen_policy_paths}
+
 CURVE_SHA256 = [
     "b836ab85030a67633bbd3d0b4f7cc7b238e288b33f8b30ef41c51339538f9a94",
     "b76e1faf8016b6667415e4d1b7b8c12853763dacc764ec1fa4f7371cd08e7773",
@@ -414,6 +430,11 @@ if "leicacontrast1a" not in m.group(1):
     s = s[:m.start(1)] + m.group(1) + "-leicacontrast1a" + s[m.end(1):]
 gradle.write_text(s)
 
+frozen_policy_after = {str(p.relative_to(root)): sha_file(p) for p in frozen_policy_paths}
+if frozen_policy_before != frozen_policy_after:
+    changed = [k for k in frozen_policy_before if frozen_policy_before[k] != frozen_policy_after.get(k)]
+    raise SystemExit("LEICACONTRAST1A modified frozen DNG/exposure policy files: " + repr(changed))
+
 proof = {
     "revision": "LEICACONTRAST1A",
     "target": "Leica M Monochrom 1.022",
@@ -435,6 +456,8 @@ proof = {
     "genericPhotonContrastUsed": False,
     "sharpnessChanged": False,
     "toningChanged": False,
+    "dngExposureTapFilesByteIdentical": True,
+    "frozenPolicyHashes": frozen_policy_after,
 }
 (root / "LEICACONTRAST1A_ISOLATION.json").write_text(json.dumps(proof, indent=2) + "\n")
 print(json.dumps(proof, indent=2))
