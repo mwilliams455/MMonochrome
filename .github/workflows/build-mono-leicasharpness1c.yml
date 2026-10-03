@@ -268,7 +268,7 @@ jobs:
           assert sharp['sourceBankSha256']=='282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10'
           tables=json.loads(Path('LEICASHARPNESS1C_TABLES.json').read_text())
           asset=root/'app/src/main/assets/mono/mono_sharpness5.bin'
-          assert asset.is_file() and asset.stat().st_size==5*16*2050*2
+          assert asset.is_file() and asset.stat().st_size==16*2050*2
           assert hashlib.sha256(asset.read_bytes()).hexdigest()==tables['assetSha256']==sharp['generatedAssetSha256']
           print(json.dumps({
             'revision':'LEICASHARPNESS1C_POLICY',
@@ -337,7 +337,7 @@ jobs:
               assert 'assets/mono/mono_contrast_curves.bin' not in names
               assert 'assets/mono/mono_sharpness5.bin' in names
               sharp=z.read('assets/mono/mono_sharpness5.bin')
-              assert len(sharp)==5*16*2050*2
+              assert len(sharp)==16*2050*2
               assert hashlib.sha256(sharp).hexdigest()==json.loads(Path('LEICASHARPNESS1C_TABLES.json').read_text())['assetSha256']
           digest=hashlib.sha256(out.read_bytes()).hexdigest()
           Path('LEICASHARPNESS1C_BASE_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
