@@ -8,16 +8,27 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Download and hash only
+      - name: Probe official browser-style download variants
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/leica"
-          for spec in             "MM|https://leica-camera.com/sites/default/files/Mm-1_022.upm|$RUNNER_TEMP/leica/Mm-1_022.upm"             "M9|https://leica-camera.com/sites/default/files/m9-1_216.upd|$RUNNER_TEMP/leica/m9-1_216.upd"; do
-            IFS='|' read -r label url path <<<"$spec"
-            curl -fL --retry 3 --retry-delay 2 -A "Mozilla/5.0" -o "$path" "$url"
-            echo "$label bytes=$(stat -c%s "$path") sha256=$(sha256sum "$path" | cut -d' ' -f1)"
-            echo "$label first32=$(xxd -p -l 32 "$path")"
-            echo "$label mime=$(file -b --mime-type "$path")"
-          done
-          rm -f "$RUNNER_TEMP/leica/"*
+          D="$RUNNER_TEMP/leica"; mkdir -p "$D"
+          PAGE="https://leica-camera.com/en-GB/downloads?field_media_document_language=984&page=9"
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/156 Safari/537.36"
+          curl -fsSL -A "$UA" -c "$D/cookies" -o "$D/page.html" "$PAGE"
+          probe() {
+            local label="$1" url="$2" out="$D/$1.bin"
+            curl -fsSL -A "$UA" -b "$D/cookies" -c "$D/cookies" -e "$PAGE"               -H 'Accept: application/octet-stream,application/x-download,*/*;q=0.8'               -o "$out" "$url"
+            echo "$label bytes=$(stat -c%s "$out") sha256=$(sha256sum "$out"|cut -d' ' -f1) mime=$(file -b --mime-type "$out")"
+            echo "$label first16=$(xxd -p -l 16 "$out")"
+          }
+          probe mm_direct "https://leica-camera.com/sites/default/files/Mm-1_022.upm"
+          probe mm_www "https://www.leica-camera.com/sites/default/files/Mm-1_022.upm"
+          probe mm_query "https://leica-camera.com/sites/default/files/Mm-1_022.upm?download=1"
+          PAGE2="https://leica-camera.com/en-US/downloads?field_media_document_language=984&page=4"
+          curl -fsSL -A "$UA" -b "$D/cookies" -c "$D/cookies" -o "$D/page2.html" "$PAGE2"
+          PAGE="$PAGE2"
+          probe m9_direct "https://leica-camera.com/sites/default/files/m9-1_216.upd"
+          probe m9_www "https://www.leica-camera.com/sites/default/files/m9-1_216.upd"
+          probe m9_query "https://leica-camera.com/sites/default/files/m9-1_216.upd?download=1"
+          rm -rf "$D"
