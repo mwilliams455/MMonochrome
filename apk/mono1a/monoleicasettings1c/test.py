@@ -29,7 +29,7 @@ assert proof["contrastPreserved"] and proof["toningPreserved"]
 
 # Generated canonical asset/header/metadata identities.
 asset=root/"app/src/main/assets/mono/mono_sharpness5.bin"
-assert asset.is_file() and asset.stat().st_size==5*16*2050*2
+assert asset.is_file() and asset.stat().st_size==16*2050*2
 assert hashlib.sha256(asset.read_bytes()).hexdigest()==proof["generatedAssetSha256"]
 meta=(root/"app/src/main/java/com/particlesdevs/photoncamera/m9/render/MonoSharpness1C.java").read_text()
 for marker in [
@@ -38,6 +38,7 @@ for marker in [
     "CODES=new int[][]",
     "nearestIsoSlot(int iso)",
     "code(int selector,int iso)",
+    "modifiedRow(byte[] bank,int selector,int isoSlot)",
 ]:
     assert marker in meta,marker
 header=(root/"app/src/main/cpp/mm_monochrom_sharpness5.inc").read_text()
@@ -46,7 +47,7 @@ for marker in [
     "MM_MONO_SHARP_ISO_COUNT = 16",
     "MM_MONO_SHARP_LUT_COUNT = 2050",
     "MM_MONO_SHARP_BORDER = 2",
-    "MM_MONO_SHARP_LUT[5][16][2050]",
+    "MM_MONO_SHARP_BASE[16][2050]",
 ]:
     assert marker in header,marker
 
@@ -110,7 +111,9 @@ assert start>=0 and end is not None
 fn=C[start:end]
 for marker in [
     "MM_MONO_SHARP_CODES[selector][isoSlot]",
-    "MM_MONO_SHARP_LUT[selector][isoSlot]",
+    "MM_MONO_SHARP_BASE[isoSlot][i]",
+    "modifiedTable1C",
+    "scaleSharp1C",
     "scratch[p]=static_cast<uint16_t>((static_cast<uint32_t>(image[p-1])+2u*image[p]+image[p+1])>>2)",
     "const int blur=(static_cast<int>(scratch[p-width])+2*static_cast<int>(scratch[p])+static_cast<int>(scratch[p+width]))>>2",
     "if(detail<-1024)correction=-clipMag",
@@ -121,7 +124,7 @@ for marker in [
     "116130*dCb",
 ]:
     assert marker in fn,marker
-assert fn.index("MM_MONO_SHARP_LUT[selector][isoSlot]") < fn.index("const uint8_t yy=contrastCurve")
+assert fn.index("MM_MONO_SHARP_BASE[isoSlot][i]") < fn.index("const uint8_t yy=contrastCurve")
 assert fn.index("const uint8_t yy=contrastCurve") < fn.index("91881*dCr")
 assert "const int B=(selector>0&&modifierCode>0)?MM_MONO_SHARP_BORDER:0;" in fn
 
@@ -141,6 +144,7 @@ for marker in [
     "MonoSharpness1C.ASSET_SHA256",
     "MonoSharpness1C.nearestIsoSlot(sharpPhysicalIso1C)",
     "MonoSharpness1C.CODES[sharpSelector1C][sharpIsoSlot1C]",
+    "MonoSharpness1C.modifiedRow(",
     "GLES30.GL_R16I",
     "setLeicaSharpnessSelection1C(",
 ]:
