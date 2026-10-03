@@ -156,9 +156,6 @@ replacements = [
     ("        hdrx = PreferenceKeys.isHdrxNrOn();\n",
      "        hdrx = false; // MONOSETTINGS1A no HDR/stacking\n",
      "HDR off"),
-    ("        heicSave = PreferenceKeys.isHeicSave();\n",
-     "        heicSave = false; // MONOSETTINGS1A JPEG/DNG output only\n",
-     "HEIC off"),
     ("        eisPhoto = PreferenceKeys.isEisPhotoOn();\n",
      "        eisPhoto = false; // MONOSETTINGS1A hidden in still UI\n",
      "EIS off"),
@@ -171,12 +168,23 @@ replacements = [
     ("        hdrxNR = PreferenceKeys.isHdrxNrOn();\n",
      "        hdrxNR = false; // MONOSETTINGS1A no HDRX NR\n",
      "HDRX NR off"),
-    ("        ultraHdr = PreferenceKeys.isUltraHdrOn();\n",
-     "        ultraHdr = false; // MONOSETTINGS1A SDR Leica-style JPEG\n",
-     "UltraHDR off"),
 ]
 for old, new, label in replacements:
     s = replace_once(s, old, new, label)
+
+optional_runtime = {}
+for old, new, label in [
+    ("        heicSave = PreferenceKeys.isHeicSave();\\n",
+     "        heicSave = false; // MONOSETTINGS1A JPEG/DNG output only\\n",
+     "HEIC off"),
+    ("        ultraHdr = PreferenceKeys.isUltraHdrOn();\\n",
+     "        ultraHdr = false; // MONOSETTINGS1A SDR Leica-style JPEG\\n",
+     "UltraHDR off"),
+]:
+    present = old in s
+    optional_runtime[label] = present
+    if present:
+        s = replace_once(s, old, new, label)
 settings.write_text(s)
 
 g = gradle.read_text()
@@ -203,7 +211,9 @@ proof = {
     "quadBayerRuntimeEnabled": False,
     "genericPhotonImageTuningVisible": False,
     "heicVisible": False,
+    "heicRuntimeControlPresentAndForcedOff": optional_runtime.get("HEIC off", False),
     "ultraHdrVisible": False,
+    "ultraHdrRuntimeControlPresentAndForcedOff": optional_runtime.get("UltraHDR off", False),
     "rawOutputSelectorRetained": True,
     "horizonRetained": True,
     "renderChanged": False,
