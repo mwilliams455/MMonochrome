@@ -283,10 +283,14 @@ s = one(s,
 """,
     "RAWSCALAR native signature")
 s = one(s,
-    """    const double invR=static_cast<double>(neutralG)/static_cast<double>(neutralR);
-    const double invB=static_cast<double>(neutralG)/static_cast<double>(neutralB);
+    """    void* rawPixels=nullptr;
+    if(AndroidBitmap_lockPixels(env,bitmap,&rawPixels)!=ANDROID_BITMAP_RESULT_SUCCESS || !rawPixels) return JNI_FALSE;
+    jboolean isCopy=JNI_FALSE;
+    jshort* raw=static_cast<jshort*>(env->GetPrimitiveArrayCritical(rawArray,&isCopy));
 """,
-    """    if (!contrastCurveArray || env->GetArrayLength(contrastCurveArray) != 2048) {
+    """    void* rawPixels=nullptr;
+    if(AndroidBitmap_lockPixels(env,bitmap,&rawPixels)!=ANDROID_BITMAP_RESULT_SUCCESS || !rawPixels) return JNI_FALSE;
+    if (!contrastCurveArray || env->GetArrayLength(contrastCurveArray) != 2048) {
         AndroidBitmap_unlockPixels(env,bitmap);
         throwIllegalArgument(env, "MONO1A Contrast curve must be 2048 bytes");
         return JNI_FALSE;
@@ -296,10 +300,10 @@ s = one(s,
     if (env->ExceptionCheck()) { AndroidBitmap_unlockPixels(env,bitmap); return JNI_FALSE; }
     std::array<uint8_t,2048> contrastCurve{};
     for (size_t i=0;i<contrastCurve.size();++i) contrastCurve[i]=static_cast<uint8_t>(contrastBytes[i]);
-    const double invR=static_cast<double>(neutralG)/static_cast<double>(neutralR);
-    const double invB=static_cast<double>(neutralG)/static_cast<double>(neutralB);
+    jboolean isCopy=JNI_FALSE;
+    jshort* raw=static_cast<jshort*>(env->GetPrimitiveArrayCritical(rawArray,&isCopy));
 """,
-    "RAWSCALAR contrast pointer")
+    "RAWSCALAR contrast buffer before raw critical")
 s = one(s,
     "int32_t idx=v>>3;if(idx>2047)idx=2047;const uint8_t yy=MM_MONO1A_CURVE02[idx];if(yy>=250)near++;",
     "int32_t idx=v>>3;if(idx>2047)idx=2047;const uint8_t yy=contrastCurve[static_cast<size_t>(idx)];if(yy>=250)near++;",
