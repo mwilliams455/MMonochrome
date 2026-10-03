@@ -1,0 +1,600 @@
++        if(selected.plan==null) {
++            // Correct current controls win over stale drawn controls. No hardware-AE exposure fallback.
++            MonoExposurePlan1A fresh=updateMonoExposurePlan1A(mPreviewCaptureResult);
++            if(fresh!=null) selected=new MonoExposureStore1A.Selection(fresh,
++                    "fresh_current_control_plan_not_yet_GL_drawn",-1,-1,
++                    MonoExposurePlan1A.boundedScale(fresh.previewScale()));
++        }
++        if(selected.plan!=null) {
++            // The immutable selected plan survives for this request. Everything
++            // feeding the next request must be newer than this shutter.
++            com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.captureBoundary1E(camera1E,shutterNs);
++            monoExposureStore1A.captureBoundary(shutterNs);
++        }
++        return selected;
++    }
++
++    public void updateMonoLivePairPreview1E(
++            int intendedIso, long intendedExposureNs,
++            int actualPreviewIso, long actualPreviewExposureNs,
++            double exposureScale, long previewSensorTimestampNs,
++            int aeState, int awbState, int afState) {
++        // Diagnostic mirror only; no exposure/capture authority change.
++        if (intendedIso > 0) monoLivePairIntendedIso1E = intendedIso;
++        if (intendedExposureNs > 0L) monoLivePairIntendedExposureNs1E = intendedExposureNs;
++        if (actualPreviewIso > 0) monoLivePairPreviewIso1E = actualPreviewIso;
++        if (actualPreviewExposureNs > 0L) monoLivePairPreviewExposureNs1E = actualPreviewExposureNs;
++        if (Double.isFinite(exposureScale) && exposureScale > 0.0)
++            monoLivePairExposureScale1E = Math.max(0.0625, Math.min(16.0, exposureScale));
++        monoLivePairPreviewSensorTimestampNs1E = previewSensorTimestampNs;
++        monoLivePairPreviewUpdatedElapsedNs1E = SystemClock.elapsedRealtimeNanos();
++        monoLivePairPreviewAeState1E = aeState;
++        monoLivePairPreviewAwbState1E = awbState;
++        monoLivePairPreviewAfState1E = afState;
++    }
++
+     private void captureStillPicture() {
+         try {
+             if (null == mCameraDevice) {
+                 return;
+             }
++            // MONOLIVEGL1E_LIVEPAIRDIAG1A: shutter-time identity only.
++            final long monoLivePairShutterElapsedNs1E = SystemClock.elapsedRealtimeNanos();
++            final long monoLivePairShutterWallMs1E = System.currentTimeMillis();
+             SensorConfigInjector.applyToSensor(getTunablePhysicalId(), this);
+             if (isZslMode()) {
+                 triggerZslCapture();
+                 return;
+             }
++            final MonoExposureStore1A.Selection monoSelection1A=selectMonoCapturePlan1A(monoLivePairShutterElapsedNs1E);
++            final MonoExposurePlan1A monoCapturePlan1A=monoSelection1A==null?null:monoSelection1A.plan;
++            if(useMonoExposurePlan1A() && monoCapturePlan1A==null) {
++                mState=STATE_PREVIEW;
++                unlockFocus();
++                cameraEventsListener.onProcessingError("Exposure preview is not ready. Please try again.");
++                return;
++            }
++            final IsoExpoSelector.ExpoPair monoLivePairShutterSelector1E =
++                    monoCapturePlan1A!=null ? new IsoExpoSelector.ExpoPair(monoCapturePlan1A.exposureNs,1L,Long.MAX_VALUE,monoCapturePlan1A.iso,1,Integer.MAX_VALUE,Integer.MAX_VALUE) : IsoExpoSelector.GenerateExpoPair(-1, this);
++            final int monoLivePairShutterSelectorIso1E = monoLivePairShutterSelector1E != null
++                    ? monoLivePairShutterSelector1E.iso : -1;
++            final long monoLivePairShutterSelectorExposureNs1E = monoLivePairShutterSelector1E != null
++                    ? monoLivePairShutterSelector1E.exposure : -1L;
+             // This is the CaptureRequest.Builder that we use to take a picture.
+             final CaptureRequest.Builder captureBuilder;
+             if(PhotonCamera.getSettings().selectedMode.equals(CameraMode.RAWVIDEO)) {
+@@ -4010,7 +4199,7 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+                 captureBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+             }
+             float focus = mFocus;
+-            double frametime = ExposureIndex.time2sec(IsoExpoSelector.GenerateExpoPair(-1, this).exposure);
++            double frametime = ExposureIndex.time2sec(monoLivePairShutterSelector1E.exposure);
+             //this.mCaptureSession.stopRepeating();
+             if(isDualSession) {
+                 if (mTargetFormat != mPreviewTargetFormat)
+@@ -4026,6 +4215,19 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+             }
+             Camera2ApiAutoFix.applyEnergySaving();
+             cameraRotation = PhotonCamera.getGravity().getCameraRotation(mSensorOrientation);
++            final int monoLivePairRotation1E = cameraRotation;
++            final String monoLivePairPhysicalId1E = physicalID;
++            final org.json.JSONObject monoLivePairPreviewSnapshot1E =
++                    MonoLivePairDiagnostics1E.capturePreviewSnapshot(
++                            monoLivePairShutterElapsedNs1E, monoLivePairShutterWallMs1E,
++                            monoLivePairIntendedIso1E, monoLivePairIntendedExposureNs1E,
++                            monoLivePairShutterSelectorIso1E, monoLivePairShutterSelectorExposureNs1E,
++                            monoLivePairPreviewIso1E, monoLivePairPreviewExposureNs1E,
++                            monoLivePairExposureScale1E, monoLivePairPreviewSensorTimestampNs1E,
++                            monoLivePairPreviewUpdatedElapsedNs1E, monoLivePairPreviewAeState1E,
++                            monoLivePairPreviewAwbState1E, monoLivePairPreviewAfState1E,
++                            monoLivePairPhysicalId1E, monoLivePairRotation1E);
++            MonoExposureDiagnostics1A.attach(monoLivePairPreviewSnapshot1E,monoSelection1A);
+ 
+             //captureBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+             //setCaptureAEMode(captureBuilder);
+@@ -4144,7 +4346,7 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+             if (frameCount == -1) {
+                 for (int i = 0; i < 1; i++) {
+                     if(!PhotonCamera.getSettings().selectedMode.equals(CameraMode.RAWVIDEO))
+-                        IsoExpoSelector.setExpo(captureBuilder, i, this);
++                        IsoExpoSelector.setMonoPlannedExpo1A(captureBuilder, i, this, monoCapturePlan1A);
+                     else {
+                         captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, mPreviewAFMode);
+                         captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, mPreviewAEMode);
+@@ -4154,7 +4356,7 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+             } else {
+                 long[] times = new long[frameCount];
+                 for (int i = 0; i < frameCount; i++) {
+-                    IsoExpoSelector.setExpo(captureBuilder, i, this);
++                    IsoExpoSelector.setMonoPlannedExpo1A(captureBuilder, i, this, monoCapturePlan1A);
+                     times[i] = IsoExpoSelector.lastSelectedExposure;
+                     captures.add(captureBuilder.build());
+                     mCaptureRequest = captureBuilder.build();
+@@ -4174,6 +4376,7 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+ 
+             final long[] baseFrameNumber = {0};
+             final int[] maxFrameCount = {frameCount};
++            final AtomicBoolean monoLivePairWritten1E = new AtomicBoolean(false);
+ 
+             cameraEventsListener.onCaptureStillPictureStarted("CaptureStarted!");
+             mMeasuredFrameCnt = 0;
+@@ -4215,6 +4418,12 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+ 
+                     int frameCount = (int) (result.getFrameNumber() - baseFrameNumber[0]);
+                     Log.v("BurstCounter", "CaptureCompleted! FrameCount:" + frameCount);
++                    // MONOLIVEGL1E_LIVEPAIRDIAG1A: one bounded in-memory pair per shutter; export is deferred.
++                    if (monoLivePairWritten1E.compareAndSet(false, true)) {
++                        MonoLivePairDiagnostics1E.writeCompleted(
++                                monoLivePairPreviewSnapshot1E, request, result,
++                                monoLivePairPhysicalId1E, monoLivePairRotation1E);
++                    }
+                     Object time = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                     Log.d(TAG, "Timestamp:" + time);
+                     if (paramController != null && paramController.WB != 0) {
+@@ -5208,6 +5417,8 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+         } else {
+             mPreviewTargetFormat = ImageFormat.JPEG;
+         }
++        // M9 recovery diagnostic YUV.
++        if (M9Config.isCaptureTest()) { mPreviewTargetFormat = ImageFormat.YUV_420_888; M9SubjectMotionAnalyzer.reset(); }
+         processExecutor.execute(() -> {
+             if (mTextureView == null)
+                 mTextureView = new GLPreview(activity);
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/capture/ZoomController.java b/app/src/main/java/com/particlesdevs/photoncamera/capture/ZoomController.java
+index eb1409c2..599ab226 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/capture/ZoomController.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/capture/ZoomController.java
+@@ -83,6 +83,13 @@ public class ZoomController {
+      * active lens). Defaults to false (auto-switch).
+      */
+     private boolean lensSwitchLocked;
++    // A custom renderer may require a full-sensor RAW/shading contract.
++    private boolean digitalCropEnabled = true;
++
++    public void setDigitalCropEnabled(boolean enabled) {
++        digitalCropEnabled = enabled;
++        recomputeDigitalZoom();
++    }
+ 
+     /** Effective zoom seen by the user / gesture; the state-machine input. */
+     private volatile float targetZoom = MIN_ZOOM;
+@@ -218,6 +225,7 @@ public class ZoomController {
+         if (newIndex != activeLensIndex) {
+             activeLensIndex = newIndex;
+             digitalZoom = MIN_ZOOM; // the new lens starts at native (no crop)
++            if (!digitalCropEnabled && activeLens() != null) targetZoom = activeLens().nativeZoom;
+             if (lensSwitchListener != null && !lensesAsc.isEmpty()) {
+                 lensSwitchListener.onLensSwitch(lensesAsc.get(newIndex).cameraId);
+             }
+@@ -259,11 +267,11 @@ public class ZoomController {
+     public float getMaxZoom() {
+         if (lensSwitchLocked) {
+             LensEntry active = activeLens();
+-            if (active != null) return active.nativeZoom * Math.max(1f, active.maxDigitalZoom);
++            if (active != null) return active.nativeZoom * (digitalCropEnabled ? Math.max(1f, active.maxDigitalZoom) : 1f);
+         }
+         if (lensesAsc.isEmpty()) return MIN_ZOOM;
+         LensEntry last = lensesAsc.get(lensesAsc.size() - 1);
+-        return last.nativeZoom * Math.max(1f, last.maxDigitalZoom);
++        return last.nativeZoom * (digitalCropEnabled ? Math.max(1f, last.maxDigitalZoom) : 1f);
+     }
+ 
+     /** The currently active lens entry, or {@code null} if none is anchored yet. */
+@@ -360,6 +368,11 @@ public class ZoomController {
+             return;
+         }
+         LensEntry lens = lensesAsc.get(activeLensIndex);
++        if (!digitalCropEnabled) {
++            targetZoom = lens.nativeZoom;
++            digitalZoom = MIN_ZOOM;
++            return;
++        }
+         float dz = targetZoom / lens.nativeZoom;
+         // A lens cannot crop out; clamp to the sensor's max digital zoom.
+         digitalZoom = clamp(dz, MIN_ZOOM, Math.max(1f, lens.maxDigitalZoom));
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/control/Swipe.java b/app/src/main/java/com/particlesdevs/photoncamera/control/Swipe.java
+index e38c7f0b..2e1c3a12 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/control/Swipe.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/control/Swipe.java
+@@ -169,6 +169,9 @@ public class Swipe {
+     }
+ 
+     private void startTouchToFocus(MotionEvent event) {
++        if(cameraFragment.getTouchFocus()!=null && cameraFragment.getTouchFocus().processMonoTap1A(
++                event.getRawX(),event.getRawY(),
++                manualModeConsole.getManualParamModel().getCurrentFocusValue()==ManualParamModel.FOCUS_AUTO))return;
+         ConstraintLayout camera_container = cameraFragment.findViewById(R.id.camera_container);
+         RectF viewfinderRect = getViewfinderRect();
+         // Interface.getCameraFragment().showToast(previewRect.toString()+"\nCurX"+event.getX()+"CurY"+event.getY());
+@@ -218,15 +221,11 @@ public class Swipe {
+             ocManual.animate().rotation(0).setDuration(Motion.durationMedium1(ocManual.getContext()))
+                     .setInterpolator(Motion.emphasized(ocManual.getContext())).start();
+             cameraFragment.getTouchFocus().resetFocusCircle();
+-            // Capture before the resets below clear the values: if no knob was
+-            // touched, there is nothing to re-apply and the preview session can
+-            // be left alone, making close as cheap as open.
+-            boolean hadManualChanges = manualModeConsole.getManualParamModel().isManualMode();
+-            manualModeConsole.retractAllKnobs();
++            // MANUALISO1B_PRESERVE_SWIPE: closing the panel must not silently
++            // reset Camera2 preview/manual state before the shutter is pressed.
+             manualModeConsole.setPanelVisibility(false);
+-            if (hadManualChanges) {
+-                captureController.reset3Aparams();
+-            }
++            manualModeConsole.retractAllKnobs();
++            captureController.getParamController().setupPreview();
+         } else {
+             cameraFragmentViewModel.setSettingsBarVisible(true);
+         }
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/control/TouchFocus.java b/app/src/main/java/com/particlesdevs/photoncamera/control/TouchFocus.java
+index 40fa2cde..bdd899c9 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/control/TouchFocus.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/control/TouchFocus.java
+@@ -288,6 +288,28 @@ public class TouchFocus {
+         resetSpotWbIndicator();
+     }
+ 
++
++    /** MONOTAPMETER1A: focus if possible, but meter the selected subject even without AF. */
++    public boolean processMonoTap1A(float rawX,float rawY,boolean autofocus) {
++        if(captureController==null || !captureController.useMonoExposurePlan1A())return false;
++        long now=SystemClock.elapsedRealtimeNanos();
++        com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.Geometry g=
++                com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.currentGeometry(now);
++        if(g==null)return false;
++        int[] origin=new int[2];viewfinderFrame.getLocationOnScreen(origin);
++        float x=rawX-origin[0],y=rawY-origin[1];
++        if(x<0||y<0||x>=viewfinderFrame.getWidth()||y>=viewfinderFrame.getHeight())return true;
++        if(com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.insideSelection(x,y,now)) {
++            com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.clear("tap_box_return_to_auto");
++            resetFocusCircle();setInitialAFAE();viewfinderFrame.invalidate();return true;
++        }
++        if(com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.choose(x,y,now)) {
++            if(autofocus)processTouchToFocus(x,y);
++            viewfinderFrame.invalidate();
++        }
++        return true;
++    }
++
+     public void processTouchToFocus(float fx, float fy) {
+         if (isTapInsideFocusCircle(fx, fy)) {
+             // Tapping the visible focus circle cancels the touch focus and restores
+@@ -526,7 +548,10 @@ public class TouchFocus {
+                 afRegionsWritten = true;
+             }
+             if (maxRegions(characteristics, CameraCharacteristics.CONTROL_MAX_REGIONS_AE) > 0) {
+-                builder.set(CaptureRequest.CONTROL_AE_REGIONS, regions);
++                boolean monoTap=com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A
++                        .selection(SystemClock.elapsedRealtimeNanos())!=null;
++                builder.set(CaptureRequest.CONTROL_AE_REGIONS,monoTap
++                        ?new MeteringRectangle[]{new MeteringRectangle(0,0,0,0,0)}:regions);
+                 aeRegionsWritten = true;
+             }
+             armedRegionsTag = (afRegionsWritten || aeRegionsWritten) ? regions : null;
+@@ -924,6 +949,7 @@ public class TouchFocus {
+     //Thread safe
+     //call when focus circle needs to be hidden immediately
+     public void resetFocusCircle() {
++        com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.clear("focus_reset_or_return_to_auto");
+         focusCircleView.removeCallbacks(hideFocusCircleRunnable);
+         focusCircleView.post(hideFocusCircleRunnable);
+         resetAutoFocus();
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/manual/ParamController.java b/app/src/main/java/com/particlesdevs/photoncamera/manual/ParamController.java
+index aba81d8e..ada897df 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/manual/ParamController.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/manual/ParamController.java
+@@ -17,6 +17,9 @@ package com.particlesdevs.photoncamera.manual;
+  *         along with this program.  If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposurePlan1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureStore1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureDiagnostics1A;
+ import android.hardware.camera2.CaptureRequest;
+ import android.hardware.camera2.CaptureResult;
+ import android.hardware.camera2.params.ColorSpaceTransform;
+@@ -65,6 +68,13 @@ public class ParamController implements Observer {
+             Log.w(TAG, "setShutter(): mPreviewRequestBuilder is null");
+             return;
+         }
++        if(captureController.useMonoExposurePlan1A()) {
++            captureController.invalidateMonoExposurePlan1A();
++            builder.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON);
++            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,0);
++            captureController.rebuildPreviewBuilder();
++            return;
++        }
+         if (shutterNs == ManualParamModel.EXPOSURE_AUTO) {
+             if (currentISO == ManualParamModel.ISO_AUTO)// check if ISO is Auto
+             {
+@@ -79,11 +89,20 @@ public class ParamController implements Observer {
+     }
+ 
+     public void setISO(int isoVal, double currentExposure) {
++        // MANUALISO1B_TRACE_PARAM: prove the model value survives into preview Camera2 state.
++        Log.i(TAG, "MANUALISO1B setISO isoVal=" + isoVal + " currentExposure=" + currentExposure);
+         CaptureRequest.Builder builder = captureController.mPreviewRequestBuilder;
+         if (builder == null) {
+             Log.w(TAG, "setISO(): mPreviewRequestBuilder is null");
+             return;
+         }
++        if(captureController.useMonoExposurePlan1A()) {
++            captureController.invalidateMonoExposurePlan1A();
++            builder.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON);
++            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,0);
++            captureController.rebuildPreviewBuilder();
++            return;
++        }
+         if (isoVal == ManualParamModel.ISO_AUTO) {
+             if (currentExposure == ManualParamModel.EXPOSURE_AUTO) // check if Exposure is Auto
+             {
+@@ -118,10 +137,25 @@ public class ParamController implements Observer {
+             Log.w(TAG, "setEV(): mPreviewRequestBuilder is null");
+             return;
+         }
++        if(captureController.useMonoExposurePlan1A()) {
++            captureController.invalidateMonoExposurePlan1A();
++            builder.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON);
++            builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,0);
++            captureController.rebuildPreviewBuilder();
++            return;
++        }
+         builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, ev);
+         captureController.rebuildPreviewBuilder();
+     }
+ 
++    public double getMonoUserEv1A() {
++        android.hardware.camera2.CameraCharacteristics chars=captureController.monoCharacteristics1A();
++        android.util.Rational step=chars==null?null:chars.get(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
++        double manualSteps=manualParamModel==null?0.0:manualParamModel.getCurrentEvValue();
++        if(manualSteps!=0 && step==null)throw new IllegalStateException("missing_EV_step");
++        return MonoExposurePlan1A.combinedEv(com.particlesdevs.photoncamera.app.PhotonCamera.getSettings().exposureCompensation,
++                manualSteps,step==null?0.0:step.doubleValue());
++    }
+     public void setWB(int wbVal) {
+         if (wbVal == (int) ManualParamModel.WB_AUTO || wbVal == 0) {
+             this.isSpotWb = false;
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/processing/DefaultSaver.java b/app/src/main/java/com/particlesdevs/photoncamera/processing/DefaultSaver.java
+index 478006bb..f319dfa4 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/processing/DefaultSaver.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/processing/DefaultSaver.java
+@@ -5,6 +5,11 @@ import android.hardware.camera2.CaptureRequest;
+ import android.hardware.camera2.CaptureResult;
+ 
+ import com.particlesdevs.photoncamera.processing.processor.RawVideoProcessor;
++import com.particlesdevs.photoncamera.m9.render.M9R35Renderer;
++import com.particlesdevs.photoncamera.m9.render.M9PrimaryRenderQueue;
++import com.particlesdevs.photoncamera.m9.M9CapturePathAllocator;
++import com.particlesdevs.photoncamera.m9.M9CaptureMetadataWriter;
++import com.particlesdevs.photoncamera.m9.M9Config;
+ import com.particlesdevs.photoncamera.util.Log;
+ import com.particlesdevs.photoncamera.api.ParseExif;
+ import com.particlesdevs.photoncamera.app.PhotonCamera;
+@@ -41,8 +46,68 @@ public class DefaultSaver extends SaverImplementation {
+         Log.d(TAG, "Acquired:" + IMAGE_BUFFER.size());
+         bufferLock = true;
+         Log.d(TAG,"Size:"+IMAGE_BUFFER.size());
++        // M9 PRIMARY1 - first-class Photon finished-image route. IMAGE_BUFFER already contains an
++        // Allocator-owned RAW ImageFrame (the same ownership model handed to HdrxProcessor), so move
++        // that frame directly to the M9 processor instead of making ASYNC1's second ~25 MB copy.
++        if (M9Config.isCaptureTest()) {
++            Path dngFile = M9CapturePathAllocator.allocate(ImagePath.newDNGFilePath());
++            ImageFrame primaryFrame = null;
++            boolean queued = false;
++            int bufferedFrameCount = IMAGE_BUFFER.size();
++            long ownershipStartedNs = System.nanoTime();
++            long ownershipTransferMs = -1L;
++            long metadataElapsedMs = -1L;
++            try {
++                primaryFrame = IMAGE_BUFFER.get(0);
++
++                // M9Modern is a one-frame renderer. Match the prior route's first-frame photographic
++                // behavior, but explicitly close any unexpected surplus frames instead of leaking them.
++                for (int i = 1; i < IMAGE_BUFFER.size(); i++) {
++                    ImageFrame extra = IMAGE_BUFFER.get(i);
++                    if (extra != null) extra.close();
++                }
++                IMAGE_BUFFER.clear();
++                ownershipTransferMs = (System.nanoTime() - ownershipStartedNs) / 1_000_000L;
++
++                M9R35Renderer.preparePrimaryDiagnostics(
++                        dngFile, primaryFrame.width, primaryFrame.height, cameraRotation,
++                        ownershipTransferMs, bufferedFrameCount);
++
++                // Freeze the capture-specific exposure/motion/backlight JSON before the next shutter
++                // can update shared live diagnostics. This is intentionally the only synchronous
++                // development instrumentation left in the PRIMARY1 route.
++                long metadataStartedNs = System.nanoTime();
++                M9CaptureMetadataWriter.write(
++                        dngFile, primaryFrame, characteristics, captureResult, captureRequest, cameraRotation);
++                metadataElapsedMs = (System.nanoTime() - metadataStartedNs) / 1_000_000L;
++            } finally {
++                // Critical point: the camera/saver lock is released while the owned ImageFrame remains
++                // valid. SaverImplementation created it in independent Allocator memory before runRaw().
++                bufferLock = false;
++            }
++
++            try {
++                primaryFrame.requireM9Raw16();
++                queued = M9PrimaryRenderQueue.enqueue(
++                        dngFile, primaryFrame, characteristics, captureResult, captureRequest,
++                        cameraRotation, ownershipTransferMs, metadataElapsedMs, processingEventsListener);
++                if (queued) {
++                    primaryFrame = null; // QUEUE1A accepted ownership and will close it
++                }
++            } catch (Throwable queueError) {
++                Log.e(TAG, "M9 PRIMARY1 enqueue failed", queueError);
++            }
++            if (primaryFrame != null) primaryFrame.close();
++
++            // Preserve the proven capture-rearm behavior: finished-image completion is asynchronous.
++            processingEventsListener.onProcessingFinished(
++                    queued
++                            ? "M9Modern PRIMARY1: capture released; M9 is the primary Photon JPEG"
++                            : "M9Modern PRIMARY1: capture released; render was not queued");
++            return;
++        }
+         /*if (PhotonCamera.getSettings().frameCount == 1) {
+-            Path dngFile = ImagePath.newDNGFilePath();
++            Path dngFile = M9CapturePathAllocator.allocate(ImagePath.newDNGFilePath());
+             Log.d(TAG, "Size:" + IMAGE_BUFFER.size());
+             boolean imageSaved = ImageSaver.Util.saveSingleRaw(dngFile, IMAGE_BUFFER.get(0),
+                     characteristics, captureResult, cameraRotation);
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java b/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java
+index 9066cf64..53b00f7b 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageFrame.java
+@@ -45,6 +45,19 @@ public class ImageFrame {
+         return timestamp;
+     }
+ 
++    /** Fail before a native RAW16 writer can read a packed or undersized buffer. */
++    public void requireM9Raw16() {
++        long required = (long) width * height * 2L;
++        if (buffer == null || width <= 0 || height <= 0 || required > Integer.MAX_VALUE
++                || packedBits != 0 || fp16 || buffer.capacity() < required
++                || buffer.limit() < required) {
++            throw new IllegalArgumentException("M9 RAW16 required: " + width + "x" + height
++                    + "; packedBits=" + packedBits + "; fp16=" + fp16
++                    + "; capacity=" + (buffer == null ? -1 : buffer.capacity())
++                    + "; required=" + required);
++        }
++    }
++
+     public ImageFrame(ByteBuffer in, int format, int width, int row_stride, int shift, int capacity) {
+         ByteBuffer direct;
+         if (Allocator.binning) {
+@@ -57,6 +70,17 @@ public class ImageFrame {
+         } else {
+             if(format == 0x25){
+                 direct = Allocator.allocateAndCopyConvert(capacity, in, width, row_stride, shift);
++            } else if (format == ImageFormat.RAW_SENSOR) {
++                final int packedRowBytes = Math.multiplyExact(width, 2);
++                if (row_stride < packedRowBytes) {
++                    throw new IllegalArgumentException("MONO DEVICEPORT3A RAW16 rowStride smaller than logical row");
++                }
++                if (row_stride == packedRowBytes) {
++                    // MONO_DEVICEPORT3A_RAWSTRIDE_PACK1A: exact legacy path for already-tight RAW16.
++                    direct = Allocator.allocateAndCopy(capacity, in, shift);
++                } else {
++                    direct = Allocator.allocateAndCopyRaw16Packed(capacity, in, width, row_stride, shift);
++                }
+             } else {
+                 direct = Allocator.allocateAndCopy(capacity, in, shift);
+             }
+@@ -227,6 +251,8 @@ public class ImageFrame {
+      * the 16-bit buffer untouched.
+      */
+     public static void packBurstAtArrival(ImageFrame frame, int whiteLevel, boolean verify) {
++        // MONOUPSTREAM1A_RAW16: custom single-frame renderer consumes RAW16 directly.
++        if (com.particlesdevs.photoncamera.m9.M9Config.usesM9Pipeline()) return;
+         if (frame == null || frame.buffer == null || frame.packedBits > 0) return;
+         if (frame.buffer.capacity() != frame.width * frame.height * 2) return;
+         int packBits = whiteLevel > 0 ? 32 - Integer.numberOfLeadingZeros(whiteLevel) : 0;
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageSaver.java b/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageSaver.java
+index f1803f6c..6b35a3ab 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageSaver.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/processing/ImageSaver.java
+@@ -123,24 +123,154 @@ public class ImageSaver {
+     }
+ 
+     public static class Util {
++        // PERF3E_JPEGBUF64K1A_EXACT_BYTES
++        public static final class M9JpegSaveTiming {
++            public long fileOpenNs;
++            public long compressNs;
++            public long streamWriteNs;
++            public long flushNs;
++            public long closeNs;
++            public long recycleNs;
++            public long exifSetupNs;
++            public long exifSaveNs;
++            public long totalNs;
++            public long writeCalls;
++        }
++
++        private static final ThreadLocal<M9JpegSaveTiming> M9_JPEG_SAVE_TIMING = new ThreadLocal<>();
++
++        public static M9JpegSaveTiming consumeM9JpegSaveTiming() {
++            M9JpegSaveTiming timing = M9_JPEG_SAVE_TIMING.get();
++            M9_JPEG_SAVE_TIMING.remove();
++            return timing;
++        }
++
++        private static final class M9TimingOutputStream extends OutputStream {
++            private final OutputStream delegate;
++            private final M9JpegSaveTiming timing;
++
++            M9TimingOutputStream(OutputStream delegate, M9JpegSaveTiming timing) {
++                this.delegate = delegate;
++                this.timing = timing;
++            }
++
++            @Override
++            public void write(int b) throws IOException {
++                long started = System.nanoTime();
++                try {
++                    delegate.write(b);
++                } finally {
++                    timing.streamWriteNs += System.nanoTime() - started;
++                    timing.writeCalls++;
++                }
++            }
++
++            @Override
++            public void write(byte[] b, int off, int len) throws IOException {
++                long started = System.nanoTime();
++                try {
++                    delegate.write(b, off, len);
++                } finally {
++                    timing.streamWriteNs += System.nanoTime() - started;
++                    timing.writeCalls++;
++                }
++            }
++
++            @Override
++            public void flush() throws IOException {
++                long started = System.nanoTime();
++                try {
++                    delegate.flush();
++                } finally {
++                    timing.flushNs += System.nanoTime() - started;
++                }
++            }
++
++            @Override
++            public void close() throws IOException {
++                long started = System.nanoTime();
++                try {
++                    delegate.close();
++                } finally {
++                    timing.closeNs += System.nanoTime() - started;
++                }
++            }
++        }
++
+         public static boolean saveBitmapAsJPG(Path fileToSave, Bitmap img, int jpgQuality, ParseExif.ExifData exifData) {
+             exifData.COMPRESSION = String.valueOf(jpgQuality);
++            M9JpegSaveTiming timing = new M9JpegSaveTiming();
++            M9_JPEG_SAVE_TIMING.set(timing);
++            long totalStartedNs = System.nanoTime();
+             if (img != null && !img.isRecycled()) {
+                 exifData.IMAGE_WIDTH = String.valueOf(img.getWidth());
+                 exifData.IMAGE_LENGTH = String.valueOf(img.getHeight());
+             }
+             try {
+-                OutputStream outputStream = Files.newOutputStream(fileToSave);
++                long stageStartedNs = System.nanoTime();
++                OutputStream rawOutputStream = Files.newOutputStream(fileToSave);
++                timing.fileOpenNs = System.nanoTime() - stageStartedNs;
++                // PERF3F EXIFASYNC1A + JPEGBUF64K1A: transport-only batching; Bitmap.compress bytes/quality are unchanged.
++                OutputStream timedRawOutputStream = new M9TimingOutputStream(rawOutputStream, timing);
++                OutputStream outputStream = new java.io.BufferedOutputStream(timedRawOutputStream, 64 * 1024);
++
++                stageStartedNs = System.nanoTime();
+                 img.compress(Bitmap.CompressFormat.JPEG, jpgQuality, outputStream);
++                timing.compressNs = System.nanoTime() - stageStartedNs;
+                 outputStream.flush();
+                 outputStream.close();
++
++                stageStartedNs = System.nanoTime();
