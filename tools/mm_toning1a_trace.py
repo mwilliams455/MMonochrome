@@ -113,6 +113,34 @@ def split_refs(lines,target):
                 break
     return out
 
+def profile_field_consumers(lines):
+    """Find windows that reconstruct active_profile*0xac and read +0x18/+0x1c."""
+    out=[]
+    for i,l in enumerate(lines):
+        if not re.search(r'\b0xac\b',l,re.I):
+            continue
+        ctx=lines[max(0,i-45):min(len(lines),i+90)]
+        text='\n'.join(ctx)
+        if '0x488' not in text:
+            continue
+        reads=[]
+        for x in ctx:
+            if re.search(r'=\s*\[[P][0-7]\s*\+\s*0x(?:18|1c)\]',x,re.I):
+                reads.append(x)
+        if reads:
+            out.append({'site':hex(ao(l)),'reads':reads,'context':ctx})
+    # dedupe overlapping sites by first read line text
+    uniq=[];seen=set()
+    for x in out:
+        key=tuple(x['reads'])
+        if key in seen: continue
+        seen.add(key);uniq.append(x)
+    return uniq
+
+def string_refs(lines,bf,file_off):
+    target=RAM+file_off
+    return {'target':hex(target),'literal_hits':literal_hits(bf,target),'split_refs':split_refs(lines,target)}
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('mm_decrypted',type=pathlib.Path)
@@ -152,7 +180,7 @@ def main():
             'target':hex(t),
             'literal_hits':literal_hits(bf,t),
             'split_refs':split_refs(lines,t),
-            'direct_xrefs':direct_xrefs(lines,t) if name.endswith('callback') else [],
+            'direct_xrefs':direct_xrefs(lines,t) if name in ('hue_callback','strength_callback','hue_state','strength_state') else [],
         }
 
     report={
@@ -170,6 +198,15 @@ def main():
         'strength':function_window(lines,sstate),
       },
       'refs':refs,
+      'profile_field_consumers':profile_field_consumers(lines),
+      'jpeg_string_refs':{
+        'LoadJPEG':string_refs(lines,bf,0xCD83C),
+        'AbortJPEG':string_refs(lines,bf,0xCD848),
+        'ErrorJPEG':string_refs(lines,bf,0xCD854),
+        'ColorMatrix':string_refs(lines,bf,0xCE36C),
+        'ConvertYCrCb':string_refs(lines,bf,0xCE378),
+        'YCrCb':string_refs(lines,bf,0xCFCD8),
+      },
       'manual_semantics':{
         'hue':['Sepia','Blue/Cool','Selenium'],
         'strength':['Off','Weak','Strong'],
@@ -188,6 +225,8 @@ def main():
             f.write(f'\n===== {name.upper()} SETTER =====\n'+'\n'.join(body)+'\n')
         for name,body in report['getters'].items():
             f.write(f'\n===== {name.upper()} GETTER =====\n'+'\n'.join(body)+'\n')
+        f.write('\n===== PROFILE FIELD CONSUMERS =====\n'+json.dumps(report['profile_field_consumers'],indent=2)+'\n')
+        f.write('\n===== JPEG STRING REFERENCES =====\n'+json.dumps(report['jpeg_string_refs'],indent=2)+'\n')
         f.write('\n===== REFERENCES =====\n'+json.dumps(refs,indent=2)+'\n')
     print(json.dumps({
         'hue':[(x['string'],x['value']) for x in hue],
