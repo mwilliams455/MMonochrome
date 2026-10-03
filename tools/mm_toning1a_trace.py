@@ -141,6 +141,22 @@ def string_refs(lines,bf,file_off):
     target=RAM+file_off
     return {'target':hex(target),'literal_hits':literal_hits(bf,target),'split_refs':split_refs(lines,target)}
 
+def call_targets_in_range(lines,lo,hi):
+    out=[]
+    for i,l in enumerate(lines):
+        m=CALL_RE.search(l)
+        if not m: continue
+        t=int(m.group(2),16)
+        if lo <= t < hi:
+            out.append({'site':hex(ao(l)),'target':hex(t),'context':lines[max(0,i-20):min(len(lines),i+25)]})
+    return out
+
+def u32_window(bf,runtime_addr,count=32,before_words=4):
+    off=runtime_addr-RAM-before_words*4
+    if off<0 or off+(count+before_words)*4>len(bf): return []
+    vals=struct.unpack_from('<'+('I'*(count+before_words)),bf,off)
+    return [{'addr':hex(RAM+off+i*4),'value':hex(v)} for i,v in enumerate(vals)]
+
 def offset_accesses(lines,offsets):
     out={}
     for off in offsets:
@@ -221,8 +237,16 @@ def main():
         'ConvertYCrCb':string_refs(lines,bf,0xCE378),
         'YCrCb':string_refs(lines,bf,0xCFCD8),
       },
-      'job_toning_field_accesses':offset_accesses(lines,[0x450,0x454]),
-      'job_builder_window':address_window(lines,0x378d0,0x37a80),
+      'job_toning_field_accesses':offset_accesses(lines,[0x450,0x454,0x458,0x45c]),
+      'job_builder_window':address_window(lines,0x37600,0x37a80),
+      'job_builder_call_targets':call_targets_in_range(lines,0x37600,0x37a80),
+      'strength_resolver':{
+        'address':'0xaba8c',
+        'body':function_window(lines,0xaba8c,800),
+        'direct_xrefs':direct_xrefs(lines,0xaba8c),
+        'table_root_runtime':'0xdb7ac',
+        'table_u32_window':u32_window(bf,0xdb7ac,48,8),
+      },
       'jpeg_debug_windows':{
         'LoadJPEG':address_window(lines,0x638b0,0x63b40),
         'ColorMatrix_ConvertYCrCb':address_window(lines,0x79040,0x79160),
@@ -245,7 +269,10 @@ def main():
             f.write(f'\n===== {name.upper()} SETTER =====\n'+'\n'.join(body)+'\n')
         for name,body in report['getters'].items():
             f.write(f'\n===== {name.upper()} GETTER =====\n'+'\n'.join(body)+'\n')
-        f.write('\n===== JOB BUILDER 0x378d0..0x37a80 =====\n'+'\n'.join(report['job_builder_window'])+'\n')
+        f.write('\n===== JOB BUILDER BROAD WINDOW =====\n'+'\n'.join(report['job_builder_window'])+'\n')
+        f.write('\n===== JOB BUILDER CALL TARGETS =====\n'+json.dumps(report['job_builder_call_targets'],indent=2)+'\n')
+        f.write('\n===== STRENGTH RESOLVER 0xABA8C =====\n'+'\n'.join(report['strength_resolver']['body'])+'\n')
+        f.write('\n===== STRENGTH TABLE ROOT 0xDB7AC =====\n'+json.dumps(report['strength_resolver']['table_u32_window'],indent=2)+'\n')
         f.write('\n===== JOB TONING FIELD ACCESSES =====\n'+json.dumps(report['job_toning_field_accesses'],indent=2)+'\n')
         f.write('\n===== JPEG DEBUG WINDOWS =====\n'+json.dumps(report['jpeg_debug_windows'],indent=2)+'\n')
         f.write('\n===== PROFILE FIELD CONSUMERS =====\n'+json.dumps(report['profile_field_consumers'],indent=2)+'\n')
