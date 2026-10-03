@@ -1,0 +1,104 @@
+name: Probe Monochrom Modern Photon Rebase
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-upstream1b-modernui-settings]
+    paths:
+      - '.github/workflows/probe-mono-modern-rebase.yml'
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Monochrom overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Checkout frozen Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+      - name: Checkout pinned portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Reconstruct current MONOTAPMETER1B source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY'
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monotapmeter1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1;continue
+              i+=1;block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-rebase-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==4,count
+          PY
+      - name: Generate complete current Monochrom overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          echo "OLD_PHOTON_BASE=$(git -C "$ROOT" rev-parse HEAD)" | tee REBASE_BASE.txt
+          git -C "$ROOT" add -A
+          git -C "$ROOT" diff --cached --binary HEAD > "$GITHUB_WORKSPACE/mono-current.patch"
+          echo "PATCH_BYTES=$(wc -c < "$GITHUB_WORKSPACE/mono-current.patch")" | tee -a REBASE_BASE.txt
+          echo "PATCH_FILES=$(grep -c '^diff --git ' "$GITHUB_WORKSPACE/mono-current.patch")" | tee -a REBASE_BASE.txt
+      - name: Three-way apply onto modern Photon
+        shell: bash
+        run: |
+          set -uo pipefail
+          PIN=4ee108e169496f429c0afa0cc33e57bb6b2ec724
+          BASE=$(sed -n 's/^OLD_PHOTON_BASE=//p' REBASE_BASE.txt)
+          git clone --no-checkout --filter=blob:none https://github.com/eszdman/PhotonCamera.git PhotonModern
+          git -C PhotonModern fetch --depth=1 origin "$PIN"
+          git -C PhotonModern checkout --detach "$PIN"
+          git -C PhotonModern fetch --depth=1 origin "$BASE" || true
+          set +e
+          git -C PhotonModern apply --3way --binary "$GITHUB_WORKSPACE/mono-current.patch" > REBASE_APPLY.log 2>&1
+          RC=$?
+          set -e
+          echo "APPLY_RC=$RC" | tee REBASE_RESULT.txt
+          git -C PhotonModern status --short | tee -a REBASE_RESULT.txt
+          git -C PhotonModern diff --name-only --diff-filter=U | tee REBASE_CONFLICTS.txt
+          echo "CONFLICT_COUNT=$(grep -c . REBASE_CONFLICTS.txt || true)" | tee -a REBASE_RESULT.txt
+          cat REBASE_APPLY.log
+          cat REBASE_RESULT.txt
+          exit 0
+      - name: Upload probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-modern-rebase-probe
+          path: |
+            REBASE_BASE.txt
+            REBASE_APPLY.log
+            REBASE_RESULT.txt
+            REBASE_CONFLICTS.txt
+          if-no-files-found: error
