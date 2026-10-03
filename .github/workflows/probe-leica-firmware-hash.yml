@@ -1,0 +1,23 @@
+name: Probe Leica M9 Monochrom firmware hashes
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-leicasettings1a-contrast]
+    paths: ['.github/workflows/probe-leica-firmware-hash.yml']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and hash only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/leica"
+          for spec in             "MM|https://leica-camera.com/sites/default/files/Mm-1_022.upm|$RUNNER_TEMP/leica/Mm-1_022.upm"             "M9|https://leica-camera.com/sites/default/files/m9-1_216.upd|$RUNNER_TEMP/leica/m9-1_216.upd"; do
+            IFS='|' read -r label url path <<<"$spec"
+            curl -fL --retry 3 --retry-delay 2 -A "Mozilla/5.0" -o "$path" "$url"
+            echo "$label bytes=$(stat -c%s "$path") sha256=$(sha256sum "$path" | cut -d' ' -f1)"
+            echo "$label first32=$(xxd -p -l 32 "$path")"
+            echo "$label mime=$(file -b --mime-type "$path")"
+          done
+          rm -f "$RUNNER_TEMP/leica/"*
