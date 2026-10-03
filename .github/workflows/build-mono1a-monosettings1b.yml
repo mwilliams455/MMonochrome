@@ -3,7 +3,7 @@ name: Build MMonochrome MONOSETTINGS1B Top-Bar Settings
 on:
   workflow_dispatch:
   push:
-    branches: [research/monosettings1b-topbar-settings]
+    branches: [research/mono-upstream1b-modernui-settings]
     paths:
       - 'apk/mono1a/monosettings1b/**'
       - '.github/workflows/build-mono1a-monosettings1b.yml'
@@ -25,11 +25,11 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Checkout frozen Android scaffold
+      - name: Checkout published modern M9 wrapper
         uses: actions/checkout@v4
         with:
           repository: mwilliams455/M9Camera_refresh
-          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          ref: research/m9-upstream2r-fix1
           path: m9base
           fetch-depth: 1
 
@@ -40,6 +40,13 @@ jobs:
           ref: 57476072a146d53da11235667f9681e64427c9cf
           path: m9port
           fetch-depth: 1
+
+      - name: Reconstruct Photon 4ee modern M9 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 m9base/patches/upstream2r_fix1/assemble.py m9base/PhotonCamera
+          test "$(git -C m9base/PhotonCamera rev-parse HEAD)" = "4ee108e169496f429c0afa0cc33e57bb6b2ec724"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
