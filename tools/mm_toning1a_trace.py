@@ -141,6 +141,20 @@ def string_refs(lines,bf,file_off):
     target=RAM+file_off
     return {'target':hex(target),'literal_hits':literal_hits(bf,target),'split_refs':split_refs(lines,target)}
 
+def offset_accesses(lines,offsets):
+    out={}
+    for off in offsets:
+        pat=re.compile(rf'\[[^\]]+\+\s*0x{off:x}\]',re.I)
+        rows=[]
+        for i,l in enumerate(lines):
+            if pat.search(l):
+                rows.append({'site':hex(ao(l)),'line':l,'context':lines[max(0,i-55):min(len(lines),i+85)]})
+        out[hex(off)]=rows
+    return out
+
+def address_window(lines,lo,hi):
+    return [l for l in lines if lo <= ao(l) < hi]
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('mm_decrypted',type=pathlib.Path)
@@ -207,6 +221,12 @@ def main():
         'ConvertYCrCb':string_refs(lines,bf,0xCE378),
         'YCrCb':string_refs(lines,bf,0xCFCD8),
       },
+      'job_toning_field_accesses':offset_accesses(lines,[0x450,0x454]),
+      'job_builder_window':address_window(lines,0x378d0,0x37a80),
+      'jpeg_debug_windows':{
+        'LoadJPEG':address_window(lines,0x638b0,0x63b40),
+        'ColorMatrix_ConvertYCrCb':address_window(lines,0x79040,0x79160),
+      },
       'manual_semantics':{
         'hue':['Sepia','Blue/Cool','Selenium'],
         'strength':['Off','Weak','Strong'],
@@ -225,6 +245,9 @@ def main():
             f.write(f'\n===== {name.upper()} SETTER =====\n'+'\n'.join(body)+'\n')
         for name,body in report['getters'].items():
             f.write(f'\n===== {name.upper()} GETTER =====\n'+'\n'.join(body)+'\n')
+        f.write('\n===== JOB BUILDER 0x378d0..0x37a80 =====\n'+'\n'.join(report['job_builder_window'])+'\n')
+        f.write('\n===== JOB TONING FIELD ACCESSES =====\n'+json.dumps(report['job_toning_field_accesses'],indent=2)+'\n')
+        f.write('\n===== JPEG DEBUG WINDOWS =====\n'+json.dumps(report['jpeg_debug_windows'],indent=2)+'\n')
         f.write('\n===== PROFILE FIELD CONSUMERS =====\n'+json.dumps(report['profile_field_consumers'],indent=2)+'\n')
         f.write('\n===== JPEG STRING REFERENCES =====\n'+json.dumps(report['jpeg_string_refs'],indent=2)+'\n')
         f.write('\n===== REFERENCES =====\n'+json.dumps(refs,indent=2)+'\n')
