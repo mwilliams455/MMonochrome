@@ -372,11 +372,6 @@ p=one(p,
 
     public static synchronized JSONObject snapshot(long shutterElapsedNs) {
 ""","preview sharp methods")
-# Import class.
-p=one(p,
-"import com.particlesdevs.photoncamera.m9.render.M9R35Renderer;\n",
-"import com.particlesdevs.photoncamera.m9.render.M9R35Renderer;\nimport com.particlesdevs.photoncamera.m9.render.MonoSharpness1C;\n",
-"preview sharp import")
 # Context JSON telemetry after existing toning telemetry.
 marker='            o.put("leicaToningCr",selectedToningCr).put("leicaToningCb",selectedToningCb);\n'
 if marker not in p: raise SystemExit("preview toning telemetry anchor missing")
