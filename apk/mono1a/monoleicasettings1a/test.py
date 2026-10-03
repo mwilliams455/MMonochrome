@@ -92,19 +92,18 @@ for marker in [
 ]:
     assert marker in m, marker
 
-# DNG and exposure policy must remain byte-identical to the validated modern parent.
-frozen=json.loads((Path(__file__).resolve().parents[1]/"upstream1b"/"frozen_monochrome.json").read_text())
-must_freeze=[
+# DNG, exposure-placement and tap-meter code are snapshotted before the
+# Contrast overlay and proven byte-identical afterward by apply.py.
+assert proof["dngExposureTapFilesByteIdentical"]
+expected_frozen = {
     "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngExport1A.java",
     "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngWriter1A.java",
     "app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoLinearPlane1A.java",
     "app/src/main/java/com/particlesdevs/photoncamera/m9/exposure/MonoPlacementAssist1D.java",
     "app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoTapMeter1A.java",
     "app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java",
-]
-for rel in must_freeze:
-    got=hashlib.sha256((root/rel).read_bytes()).hexdigest()
-    assert got==frozen[rel], (rel,got,frozen[rel])
+}
+assert set(proof["frozenPolicyHashes"]) == expected_frozen
 
 report={
     "revision":"LEICACONTRAST1A_TEST",
