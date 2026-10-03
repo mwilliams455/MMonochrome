@@ -111,8 +111,8 @@ assert FIXED[1]==8_000_000
 assert FIXED[5]==125_000_000
 
 def slow_shift(iso,t,threshold,cap,manual_iso=0,manual_t=0):
-    if manual_iso>0 or manual_t>0 or t<=threshold or iso>=cap:
-        exceeded=(manual_iso==0 and manual_t==0 and t>threshold and iso>=cap)
+    if manual_iso>0 or manual_t>0 or t<=threshold+1000 or iso>=cap:
+        exceeded=(manual_iso==0 and manual_t==0 and t>threshold+1000 and iso>=cap)
         return iso,t,False,exceeded
     e=iso*t
     need=math.ceil(e/threshold)
@@ -120,7 +120,7 @@ def slow_shift(iso,t,threshold,cap,manual_iso=0,manual_t=0):
     if target<=iso:
         return iso,t,False,t>threshold and iso>=cap
     target_t=math.ceil(e/target)
-    exceeded=target_t>threshold and target>=cap
+    exceeded=target_t>threshold+1000 and target>=cap
     return target,target_t,True,exceeded
 
 # 1/15 at ISO 800 -> 1/60 at ISO 3200: same exposure energy.
