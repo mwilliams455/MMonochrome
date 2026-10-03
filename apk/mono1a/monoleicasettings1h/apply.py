@@ -209,42 +209,43 @@ s=one(s,
     public final double autoEv;
 ''',
 '''    public final int observedIso, iso, postRawBoost, flags;
-    public final double autoEv, bracketEv;
-    public final int bracketIndex, bracketCount;
+    public final double autoEv;
+    public double bracketEv;
+    public int bracketIndex, bracketCount;
 ''',"bracket plan fields")
-old_ctor='''    public MonoExposurePlan1A(long id, long epoch, long createdNs, long sensorTimestampNs,
+# Parent overlays evolve the constructor validation body, so patch its stable signature/body
+# rather than freezing an obsolete full method text.
+ctor_sig='''    public MonoExposurePlan1A(long id, long epoch, long createdNs, long sensorTimestampNs,
             String cameraKey, Controls controls, int observedIso, long observedExposureNs,
-            int iso, long exposureNs, int postRawBoost, double autoEv, String autoReason, int flags) {
-        if (id <= 0 || epoch <= 0 || createdNs <= 0 || cameraKey == null || controls == null
-                || observedIso <= 0 || observedExposureNs <= 0 || iso <= 0 || exposureNs <= 0
-                || postRawBoost <= 0 || !Double.isFinite(autoEv))
-            throw new IllegalArgumentException("invalid_monochrom_exposure_plan");
-        this.id=id; this.epoch=epoch; this.createdNs=createdNs; this.sensorTimestampNs=sensorTimestampNs;
-        this.cameraKey=cameraKey; this.controls=controls; this.observedIso=observedIso;
-        this.observedExposureNs=observedExposureNs; this.iso=iso; this.exposureNs=exposureNs;
-        this.postRawBoost=postRawBoost; this.autoEv=autoEv; this.autoReason=autoReason; this.flags=flags;
-    }'''
-new_ctor='''    public MonoExposurePlan1A(long id, long epoch, long createdNs, long sensorTimestampNs,
-            String cameraKey, Controls controls, int observedIso, long observedExposureNs,
-            int iso, long exposureNs, int postRawBoost, double autoEv, String autoReason, int flags) {
-        this(id,epoch,createdNs,sensorTimestampNs,cameraKey,controls,observedIso,observedExposureNs,
-                iso,exposureNs,postRawBoost,autoEv,autoReason,flags,0.0,-1,0);
-    }
+            int iso, long exposureNs, int postRawBoost, double autoEv, String autoReason, int flags) {'''
+if s.count(ctor_sig)!=1: raise SystemExit("LEICABRACKET1A plan constructor signature count="+str(s.count(ctor_sig)))
+cs=s.index(ctor_sig);cb=s.index("{",cs);depth=0;ce=None
+for i in range(cb,len(s)):
+    if s[i]=="{":depth+=1
+    elif s[i]=="}":
+        depth-=1
+        if depth==0:
+            ce=i+1;break
+if ce is None:raise SystemExit("LEICABRACKET1A plan constructor end missing")
+ctor=s[cs:ce]
+assign='''        this.postRawBoost=postRawBoost; this.autoEv=autoEv; this.autoReason=autoReason; this.flags=flags;'''
+if ctor.count(assign)!=1:raise SystemExit("LEICABRACKET1A constructor assignment anchor mismatch")
+ctor=ctor.replace(assign,assign+'''
+        this.bracketEv=0.0;this.bracketIndex=-1;this.bracketCount=0;''',1)
+overload='''
+
     public MonoExposurePlan1A(long id, long epoch, long createdNs, long sensorTimestampNs,
             String cameraKey, Controls controls, int observedIso, long observedExposureNs,
             int iso, long exposureNs, int postRawBoost, double autoEv, String autoReason, int flags,
             double bracketEv,int bracketIndex,int bracketCount) {
-        if (id <= 0 || epoch <= 0 || createdNs <= 0 || cameraKey == null || controls == null
-                || observedIso <= 0 || observedExposureNs <= 0 || iso <= 0 || exposureNs <= 0
-                || postRawBoost <= 0 || !Double.isFinite(autoEv) || !Double.isFinite(bracketEv))
-            throw new IllegalArgumentException("invalid_monochrom_exposure_plan");
-        this.id=id; this.epoch=epoch; this.createdNs=createdNs; this.sensorTimestampNs=sensorTimestampNs;
-        this.cameraKey=cameraKey; this.controls=controls; this.observedIso=observedIso;
-        this.observedExposureNs=observedExposureNs; this.iso=iso; this.exposureNs=exposureNs;
-        this.postRawBoost=postRawBoost; this.autoEv=autoEv; this.autoReason=autoReason; this.flags=flags;
+        this(id,epoch,createdNs,sensorTimestampNs,cameraKey,controls,observedIso,observedExposureNs,
+                iso,exposureNs,postRawBoost,autoEv,autoReason,flags);
+        if(!Double.isFinite(bracketEv)||bracketIndex<-1||bracketCount<0)
+            throw new IllegalArgumentException("invalid_monochrom_bracket_metadata");
         this.bracketEv=bracketEv;this.bracketIndex=bracketIndex;this.bracketCount=bracketCount;
     }'''
-s=one(s,old_ctor,new_ctor,"extended plan constructor")
+# Bracket metadata is constructor-only but need not be final because the overload delegates first.
+s=s[:cs]+ctor+overload+s[ce:]
 plan.write_text(s)
 
 # ---- CaptureController series coordinator ----------------------------------
