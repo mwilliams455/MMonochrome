@@ -1,4 +1,5 @@
 name: Build MMonochrome MONOSETTINGS1A Leica UI Cleanup
+# MONOSETTINGS1A final-head validation trigger
 
 on:
   workflow_dispatch:
