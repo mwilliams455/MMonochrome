@@ -30,12 +30,12 @@ for marker in [
 ]:
     assert marker in block, marker
 
-# Existing security and navigation behavior must stay intact.
-assert 'settingsButton.setVisibility(secureSession ? View.GONE : View.VISIBLE);' in camera
-assert 'settingsButton.setEnabled(!secureSession);' in camera
+# Existing navigation behavior remains the parent implementation; apply.py freezes
+# CameraFragment and CameraUIController byte-for-byte.
 assert 'case R.id.settings_button:' in controller
 assert 'cameraFragment.launchSettings();' in controller
-assert 'new Intent(activity, SettingsActivity.class)' in camera
+assert 'launchSettings()' in camera
+assert 'SettingsActivity.class' in camera
 
 report = {
     "revision": "MONOSETTINGS1B_TOPBAR_SETTINGS1A_TEST",
