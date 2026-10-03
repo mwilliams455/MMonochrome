@@ -113,9 +113,9 @@ for marker in [
     "91881*dCr",
     "22554*dCb+46802*dCr",
     "116130*dCb",
-    "const uint8_t rr=clamp8",
-    "const uint8_t gg=clamp8",
-    "const uint8_t bb=clamp8",
+    "const uint8_t outR=clamp8",
+    "const uint8_t outG=clamp8",
+    "const uint8_t outB=clamp8",
 ]:
     assert marker in cpp,marker
 
