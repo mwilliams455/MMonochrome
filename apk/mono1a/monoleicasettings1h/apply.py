@@ -388,6 +388,26 @@ capture.write_text(s)
 
 # ---- CameraFragment serializes full save/render before taking next exposure --
 s=fragment.read_text()
+s=one(s,
+'''            mCameraUIView.setProcessingProgressBarIndeterminate(true);
+            mCameraUIView.activateShutterButton(true);
+            showNotification(processName);
+''',
+'''            mCameraUIView.setProcessingProgressBarIndeterminate(true);
+            mCameraUIView.activateShutterButton(!(captureController!=null
+                    && captureController.isMonoBracketActive1H()));
+            showNotification(processName);
+''',"keep shutter disabled during bracket series")
+s=one(s,
+'''            mCameraUIView.resetCaptureProgressBar();
+            mCameraUIView.lockUIForBurst(false);
+            mCameraUIView.setVideoRecordingInfoVisible(false);
+''',
+'''            mCameraUIView.resetCaptureProgressBar();
+            if(captureController==null || !captureController.isMonoBracketActive1H())
+                mCameraUIView.lockUIForBurst(false);
+            mCameraUIView.setVideoRecordingInfoVisible(false);
+''',"keep UI locked during bracket series")
 old_finish='''        public void onProcessingFinished(Object obj) {
             logD("onProcessingFinished: " + obj);
             mCameraUIView.setProcessingProgressBarIndeterminate(false);
