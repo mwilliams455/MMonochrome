@@ -320,6 +320,10 @@ C.write_text(c)
 # ----- preview source metadata: keep current physical ISO available -----
 p=P.read_text()
 p=one(p,
+"import com.particlesdevs.photoncamera.m9.render.M9R35Renderer;\n",
+"import com.particlesdevs.photoncamera.m9.render.M9R35Renderer;\nimport com.particlesdevs.photoncamera.m9.render.MonoSharpness1C;\n",
+"preview sharp import")
+p=one(p,
 "    private static volatile Draw lastProbe;\n",
 "    private static volatile Draw lastProbe;\n    private static volatile int latestPhysicalIso1C=320;\n"
 "    private static volatile int selectedSharpSelector1C=2,selectedSharpIso1C=320,selectedSharpCode1C=8;\n",
