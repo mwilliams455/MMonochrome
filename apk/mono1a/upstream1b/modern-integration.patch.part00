@@ -1,0 +1,600 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index 203e6ada..5647fd8e 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -39,16 +39,16 @@ android {
+ 
+     defaultConfig {
+         compileSdk 36
+-        applicationId 'com.particlesdevs.photoncamera'
++        applicationId 'com.m9project.mmonochrome.photon'
+         minSdkVersion 26
+         targetSdkVersion 35
+-        versionCode versionBuild
++        versionCode 26682
+         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+         ndk {
+             //noinspection ChromeOsAbiSupport
+             abiFilters "arm64-v8a", "armeabi-v7a"
+         }
+-        versionName '0.97'
++        versionName '0.06-monochrome-upstream1a-raw16'
+         versionProps['VERSION_NAME'] = versionName
+         proguardFiles
+     }
+@@ -96,7 +96,7 @@ android {
+     namespace 'com.particlesdevs.photoncamera'
+     applicationVariants.all {
+         variant -> variant.outputs.all {
+-            outputFileName = "PhotonCamera-${versionName}${versionBuild}-${variant.name}.apk"
++            outputFileName = "MMonochrome_UPSTREAM1A-${variant.name}.apk"
+         }
+     }
+     testOptions {
+@@ -107,7 +107,9 @@ android {
+ 
+ 
+ 
++// M9 bootstrap verifier aliases: 0.97-m9modern7r35a 0.97-m9modern7r35b 0.97-m9modern7r35c 0.97-m9modern7r35d 0.97-m9modern7r36a 0.97-m9modern7r37a 0.97-m9modern7r38a 0.97-m9modern7r38luma1 0.97-m9modern7r38luma2 0.97-m9modern7r38luma21 0.97-m9modern7r38luma22 0.97-m9modern7r38luma23 0.97-m9modern7r38luma24 0.97-m9modern7r38luma24fb1 1.00-m9modern7r38luma24fb1primary1 1.01-m9modern7r38luma24fb1primary2 1.02-m9modern7r38luma24fb1primary21 1.03-m9modern7r38luma24fb1primary22 1.04-m9modern7r38luma24fb1primary22b 1.05-m9modern7r38luma24fb1primary22c 1.05-m9modern7r38luma24fb1primary22d 1.06-m9modern7r38luma24fb1primary23jni1 1.06-m9modern7r38luma24fb1primary23jni1fix1 1.07-m9modern7r38luma24fb1primary23jni1fix2 1.08-m9modern7r38luma24fb1primary23jni1fix3 1.09-m9modern7r38luma24fb1primary23jni1fix4 1.10-m9modern7r38luma24fb1primary23jni1fix5 1.11-m9modern7r38luma24fb1primary23jni1fix6 1.12-m9modern7r38luma24fb1primary23jni1fix7 1.13-m9modern7r38luma24fb1primary24tc20native1a 1.14-m9modern7r38luma24fb1primary24tc20native1b 1.15-m9modern7r38luma24fb1primary24tc20native1borient1a 1.16-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1a 1.17-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1ametafreeze1a 1.18-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1ametafreeze1acolornative2a 1.19-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1ametafreeze1acolornative2afix1 1.20-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1ametafreeze1acolornative2afix1queue1a 1.21-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1ametafreeze1acolornative2afix1name1aqueue1b 1.22-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1ametafreeze1acolornative2afix1name1aqueue1btimingfreeze1a 1.23-m9modern7r38luma24fb1primary24tc20native1borient1anormnative1ametafreeze1acolornative2afix1name1aqueue1btimingfreeze1adngasync1a
+ dependencies {
++    implementation 'org.opencv:opencv:4.13.0'
+ 
+     implementation fileTree(dir: 'libs', include: ['*.jar'])
+     implementation project(path: ':circularbarlib')
+diff --git a/app/src/main/assets/shaders/preview/main_fs.glsl b/app/src/main/assets/shaders/preview/main_fs.glsl
+index 47ed43a2..11ba222a 100644
+--- a/app/src/main/assets/shaders/preview/main_fs.glsl
++++ b/app/src/main/assets/shaders/preview/main_fs.glsl
+@@ -1,46 +1,102 @@
+ #extension GL_OES_EGL_image_external_essl3 : require
+-precision mediump float;
+-uniform samplerExternalOES sTexture;
++precision highp float;
++precision highp int;
++// MONOLIVEGL2A_CONTROLLEDOES: SOURCE1D Y + exact frozen Monochrom curve02, no fitted residual.
++uniform highp samplerExternalOES sTexture;
++uniform highp sampler2D uMonoInverse2A;
++uniform highp sampler2D uMonoCurve2A;
++uniform bool uMonoSourceReady2A;
++uniform bool uMonoProbe2A;
++uniform mat3 uMonoInputToSensor2A;
++uniform vec3 uMonoSourceY2A;
++uniform float uMonoExposureScale1A;
+ uniform vec2 resolution;
+ uniform bool enablePeak;
+ uniform bool mirror;
+-// Rounded viewfinder corners (px, 0 = square). Fragments outside the rounded
+-// rect are dropped so the blurred backdrop beneath the preview shows through.
++in vec2 texCoord;
++out vec4 Output;
+ uniform float uCornerRadius;
+-// Sharp rect origin in GL surface pixels, so the mask is built in screen space
+-// (texCoord is rotated by the vertex shader and would stretch the arcs).
+ uniform vec2 uSharpOrigin;
+-out vec4 Output;
+-in vec2 texCoord;
++float inverseChannel(float s, int c) {
++    // Reconstruct integer table nodes before interpolation. Hardware bilinear
++    // filtering of packed high/low bytes can differ by multiple output codes.
++    float p=clamp(s,0.0,1.0)*1023.0;
++    int i=int(floor(p)), j=min(i+1,1023);
++    vec3 a=(texelFetch(uMonoInverse2A,ivec2(i,0),0).rgb*256.0+
++            texelFetch(uMonoInverse2A,ivec2(i,1),0).rgb)*(255.0/65535.0);
++    vec3 b=(texelFetch(uMonoInverse2A,ivec2(j,0),0).rgb*256.0+
++            texelFetch(uMonoInverse2A,ivec2(j,1),0).rgb)*(255.0/65535.0);
++    return mix(a[c],b[c],p-float(i));
++}
++vec3 srgbLinear(vec3 c) {
++    return mix(c/12.92,pow((c+0.055)/1.055,vec3(2.4)),step(vec3(0.04045),c));
++}
++float srgbCode(float x) {
++    return x<=0.0031308 ? 12.92*x : 1.055*pow(x,1.0/2.4)-0.055;
++}
++float monochrome(vec3 oes) {
++    if (!uMonoSourceReady2A) {
++        // Explicit approximate fallback; never apply sensor transforms to unchecked OES.
++        return clamp(srgbCode(dot(srgbLinear(clamp(oes,0.0,1.0))*uMonoExposureScale1A,
++                vec3(0.2126,0.7152,0.0722))),0.0,1.0);
++    }
++    vec3 linearRgb=vec3(inverseChannel(oes.r,0),inverseChannel(oes.g,1),inverseChannel(oes.b,2));
++    vec3 sensor=uMonoInputToSensor2A*linearRgb;
++    // ISP shading/demosaic are already present. Do not apply another RAW LensShadingMap.
++    // Match the still weighted-kernel coordinate: uint16 camRGB -> rounded uint16 Y -> >>5.
++    vec3 cam16=floor(clamp(sensor*uMonoExposureScale1A,0.0,1.0)*65535.0+0.5);
++    float source16=floor(clamp(dot(cam16,uMonoSourceY2A),0.0,65535.0)+0.5);
++    int index=int(source16)>>5;
++    return texelFetch(uMonoCurve2A,ivec2(index,0),0).r;
++}
++
++float monoSource16Probe1D(vec3 oes) {
++    if (!uMonoSourceReady2A) return -1.0;
++    vec3 linearRgb=vec3(inverseChannel(oes.r,0),inverseChannel(oes.g,1),inverseChannel(oes.b,2));
++    vec3 sensor=uMonoInputToSensor2A*linearRgb;
++    vec3 cam16=floor(clamp(sensor*uMonoExposureScale1A,0.0,1.0)*65535.0+0.5);
++    return floor(clamp(dot(cam16,uMonoSourceY2A),0.0,65535.0)+0.5);
++}
++
++float monoSensorRgbMaxProbe1B(vec3 oes) {
++    if (!uMonoSourceReady2A) return -1.0;
++    vec3 linearRgb=vec3(inverseChannel(oes.r,0),inverseChannel(oes.g,1),inverseChannel(oes.b,2));
++    vec3 sensor=uMonoInputToSensor2A*linearRgb;
++    return clamp(max(sensor.r,max(sensor.g,sensor.b)),0.0,1.0);
++}
+ void main() {
+-    if (uCornerRadius > 0.0) {
++    // Display decoration must never mask the SOURCE1D metering probe.
++    if (!uMonoProbe2A && uCornerRadius > 0.0) {
+         vec2 halfSize = resolution * 0.5;
+         vec2 local = gl_FragCoord.xy - uSharpOrigin;
+         vec2 q = abs(local - halfSize) - (halfSize - vec2(uCornerRadius));
+-        float cornerDist = length(max(q, vec2(0.0)))
+-                + min(max(q.x, q.y), 0.0) - uCornerRadius;
+-        if (cornerDist > 0.0)
+-            discard;
++        float d = length(max(q, vec2(0.0))) + min(max(q.x,q.y),0.0) - uCornerRadius;
++        if (d > 0.0) discard;
++    }
++    vec2 uv=texCoord;
++    if (mirror) uv.y=1.0-uv.y;
++    vec4 oes=texture(sTexture,uv);
++    float y=monochrome(oes.rgb);
++    // One small FBO pass packs pre-transform RGB and target Y from the SAME source texture.
++    // Not a screenshot of the display compositor and not sampled RAW.
++    if (uMonoProbe2A) {
++        float source16=monoSource16Probe1D(oes.rgb);
++        float sensorMax=monoSensorRgbMaxProbe1B(oes.rgb);
++        if (source16 < 0.0 || sensorMax < 0.0) { Output=vec4(0.0,0.0,0.0,0.0); return; }
++        float hi=floor(source16/256.0);
++        float lo=source16-hi*256.0;
++        Output=vec4(hi/255.0,lo/255.0,sensorMax,1.0);
++        return;
+     }
+-    vec2 uv = texCoord.xy;
+-    if(mirror)
+-        uv.y = 1.0 - uv.y;
+-    vec4 color = texture(sTexture, uv);
+-    vec2 size = resolution;
+-    // focus peaking
+-    vec4 avg = vec4(0.0);
+-    for (int i = -1; i <= 1; i++) {
+-        for (int j = -1; j <= 1; j++) {
+-            avg += texture(sTexture, uv + vec2(i*2, j*2) / size);
+-        }
++    vec4 color=vec4(vec3(y),1.0);
++    if (enablePeak) {
++        vec4 avg=vec4(0);
++        for(int i=-1;i<=1;i++) for(int j=-1;j<=1;j++)
++            avg+=texture(sTexture,uv+vec2(i*2,j*2)/resolution);
++        avg/=9.0;
++        float diff=dot(abs(oes-avg),vec4(0.299,0.587,0.114,0));
++        float w=diff*diff/(0.05+diff*diff);
++        color+=vec4(1,0,1,0)*32.0*diff*w;
+     }
+-    avg /= 9.0;
+-    float diff = dot(abs(color - avg), vec4(0.299, 0.587, 0.114, 0.0));
+-    float denoiseK = 0.05;
+-    // denoise
+-    float w = (diff * diff) /(denoiseK + (diff * diff));
+-    vec4 dc = vec4(1.0,0.0,1.0,0.0);
+-    if(enablePeak)
+-        color = color + dc*32.0*diff*w;
+-    Output = color;
+-}
+\ No newline at end of file
++    Output=color;
++}
+diff --git a/app/src/main/cpp/CMakeLists.txt b/app/src/main/cpp/CMakeLists.txt
+index 4285faa3..71213e2e 100644
+--- a/app/src/main/cpp/CMakeLists.txt
++++ b/app/src/main/cpp/CMakeLists.txt
+@@ -15,26 +15,22 @@ set(VERSION_BUILD ${CMAKE_MATCH_1})
+ string(REGEX MATCH "VERSION_NAME=([0-9,.]*)" _ ${ver})
+ set(VERSION_NAME ${CMAKE_MATCH_1})
+ 
+-file(DOWNLOAD
+-        https://raw.githubusercontent.com/ParticlesDevs/tinydng/refs/heads/master/tiny_dng_writer.h
+-        ${CMAKE_CURRENT_SOURCE_DIR}/deps/tiny_dng_writer.h)
+-
+-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/technicallyflac.h)
+-    file(DOWNLOAD
+-            https://raw.githubusercontent.com/ParticlesDevs/technicallyflac/main/technicallyflac.h
+-            ${CMAKE_CURRENT_SOURCE_DIR}/deps/technicallyflac.h)
++# MONOUPSTREAM1A: pin the native header inputs used by the verified test build.
++file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/deps/tiny_dng_writer.h" M9_DEP_SHA)
++if(NOT M9_DEP_SHA STREQUAL "0c68ee68914b949eaf194a20d83505d4debee9272d991e68e538e25611f289cc")
++    message(FATAL_ERROR "Pinned dependency changed: tiny_dng_writer.h")
+ endif()
+-
+-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/archive.h)
+-    file(DOWNLOAD
+-            https://raw.githubusercontent.com/libarchive/libarchive/master/libarchive/archive.h
+-            ${CMAKE_CURRENT_SOURCE_DIR}/deps/archive.h)
++file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/deps/technicallyflac.h" M9_DEP_SHA)
++if(NOT M9_DEP_SHA STREQUAL "7877dfd21152cd383812a860e18feab667ac8543c55a6b80118b9c1a5f654449")
++    message(FATAL_ERROR "Pinned dependency changed: technicallyflac.h")
+ endif()
+-
+-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/archive_entry.h)
+-    file(DOWNLOAD
+-            https://raw.githubusercontent.com/libarchive/libarchive/master/libarchive/archive_entry.h
+-            ${CMAKE_CURRENT_SOURCE_DIR}/deps/archive_entry.h)
++file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/deps/archive.h" M9_DEP_SHA)
++if(NOT M9_DEP_SHA STREQUAL "0e54cb7a280ed37535b430d8f8416817ad7ef18dc45e646a0ff53edc0ce2c3a5")
++    message(FATAL_ERROR "Pinned dependency changed: archive.h")
++endif()
++file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/deps/archive_entry.h" M9_DEP_SHA)
++if(NOT M9_DEP_SHA STREQUAL "a8d2e0f18bf9b2ebd9eace883616e481cd5c6ea4f437b23640f90a3331b4506f")
++    message(FATAL_ERROR "Pinned dependency changed: archive_entry.h")
+ endif()
+ 
+ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/deps)
+@@ -248,6 +244,29 @@ target_link_libraries(
+         log
+ )
+ 
++# M9 PRIMARY2.3 JNI1 FIX7 scalar colour target.
++# PhotonCamera remains owner of the native project; this adds one isolated shared library.
++add_library(m9color SHARED
++    ${CMAKE_CURRENT_SOURCE_DIR}/m9color_jni.cpp
++)
++set_target_properties(m9color PROPERTIES
++    CXX_STANDARD 17
++    CXX_STANDARD_REQUIRED ON
++    CXX_EXTENSIONS OFF
++)
++target_compile_options(m9color PRIVATE
++    -O3
++    -ffp-contract=off
++    -fno-fast-math
++)
++# PERF3I BITMAPDIRECT1A uses AndroidBitmap_getInfo/lockPixels/unlockPixels.
++find_library(M9_JNIGRAPHICS_LIB jnigraphics)
++if(NOT M9_JNIGRAPHICS_LIB)
++    message(FATAL_ERROR "PERF3I BITMAPDIRECT1A requires libjnigraphics")
++endif()
++target_link_libraries(m9color PRIVATE ${M9_JNIGRAPHICS_LIB})
++set_property(TARGET m9color APPEND_STRING PROPERTY LINK_FLAGS " -Wl,-z,max-page-size=16384")
++
+ # --- Halide CPU burst alignment (arm64-v8a only) ----------------------------
+ # Prebuilt kernels from the halide-align project (stage 1: base pyramid once
+ # per burst; stage 2: per-frame tile matching) + the Halide arm64 runtime,
+diff --git a/app/src/main/cpp/allocator.cpp b/app/src/main/cpp/allocator.cpp
+index f829c7e4..976d5900 100644
+--- a/app/src/main/cpp/allocator.cpp
++++ b/app/src/main/cpp/allocator.cpp
+@@ -112,6 +112,64 @@ Java_com_particlesdevs_photoncamera_util_Allocator_allocateAndCopy(JNIEnv *env,
+     return buffer;
+ }
+ 
++extern "C"
++JNIEXPORT jobject JNICALL
++Java_com_particlesdevs_photoncamera_util_Allocator_allocateAndCopyRaw16Packed(
++        JNIEnv *env, jclass clazz, jint capacity, jobject originBuffer,
++        jint width, jint row_stride, jint offset) {
++    if (originBuffer == nullptr || width <= 0 || row_stride <= 0 || offset < 0 || capacity <= 0) {
++        LOGD("MONO DEVICEPORT3A invalid RAW16 pack arguments");
++        return nullptr;
++    }
++    const jlong rowBytes = static_cast<jlong>(width) * static_cast<jlong>(sizeof(uint16_t));
++    if (row_stride < rowBytes || capacity < rowBytes) {
++        LOGD("MONO DEVICEPORT3A RAW16 row/capacity too small: width=%d rowStride=%d capacity=%d",
++             width, row_stride, capacity);
++        return nullptr;
++    }
++    // Photon historically expresses a desired span as rowStride*height. Some HAL
++    // buffers omit final-row padding, so derive rows from the last logical row rather
++    // than requiring capacity to be an exact multiple of rowStride.
++    const jlong rows = 1LL + (static_cast<jlong>(capacity) - rowBytes) / static_cast<jlong>(row_stride);
++    const jlong outputSize = rowBytes * rows;
++    const jlong sourceCapacity = env->GetDirectBufferCapacity(originBuffer);
++    const jlong lastReadEnd = static_cast<jlong>(offset)
++            + (rows - 1LL) * static_cast<jlong>(row_stride) + rowBytes;
++    if (rows <= 0 || outputSize <= 0 || sourceCapacity < 0 || lastReadEnd > sourceCapacity) {
++        LOGD("MONO DEVICEPORT3A RAW16 source span invalid: rows=%lld out=%lld end=%lld cap=%lld",
++             static_cast<long long>(rows), static_cast<long long>(outputSize),
++             static_cast<long long>(lastReadEnd), static_cast<long long>(sourceCapacity));
++        return nullptr;
++    }
++    void* srcPtr = env->GetDirectBufferAddress(originBuffer);
++    if (srcPtr == nullptr) {
++        LOGD("MONO DEVICEPORT3A failed to get RAW16 direct buffer address");
++        return nullptr;
++    }
++    void* allocation = malloc(static_cast<size_t>(outputSize));
++    if (allocation == nullptr) {
++        LOGD("MONO DEVICEPORT3A failed to allocate RAW16 packed buffer of %lld bytes",
++             static_cast<long long>(outputSize));
++        return nullptr;
++    }
++    const auto* src = reinterpret_cast<const uint8_t*>(srcPtr) + offset;
++    auto* dst = static_cast<uint8_t*>(allocation);
++    for (jlong row = 0; row < rows; ++row) {
++        memcpy(dst + row * rowBytes, src + row * static_cast<jlong>(row_stride),
++               static_cast<size_t>(rowBytes));
++    }
++    jobject buffer = env->NewDirectByteBuffer(allocation, outputSize);
++    if (buffer == nullptr) {
++        free(allocation);
++        LOGD("MONO DEVICEPORT3A failed to create RAW16 packed ByteBuffer");
++        return nullptr;
++    }
++    memoryCount += static_cast<long>(outputSize);
++    LOGD("MONO DEVICEPORT3A RAW16 packed: width=%d rows=%lld rowStride=%d -> %lld bytes",
++         width, static_cast<long long>(rows), row_stride, static_cast<long long>(outputSize));
++    return buffer;
++}
++
+ extern "C"
+ JNIEXPORT jobject JNICALL
+ Java_com_particlesdevs_photoncamera_util_Allocator_allocateAndCopyConvert(JNIEnv *env, jclass clazz,
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/app/PhotonCamera.java b/app/src/main/java/com/particlesdevs/photoncamera/app/PhotonCamera.java
+index 444fe4b3..fa4f1862 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/app/PhotonCamera.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/app/PhotonCamera.java
+@@ -225,6 +225,9 @@ public class PhotonCamera extends Application {
+     private void initModules() {
+ 
+         SimpleStorageHelper.init(this);
++        // MONOOUTPUT1B_STARTUP: asynchronous private-job recovery; no camera or pixel access.
++        com.particlesdevs.photoncamera.m9.export.MonoDngExport1A.startRecovery();
++
+ 
+         // Load the FlowNet optical-flow model + warm its shaders on a background
+         // thread right now, so the first HDR/ESD4D session is already warm.
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java b/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java
+index 7039b6ec..efcd6853 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java
+@@ -15,6 +15,9 @@ package com.particlesdevs.photoncamera.capture;
+  * limitations under the License.
+  */
+ 
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposurePlan1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureStore1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureDiagnostics1A;
+ import android.Manifest;
+ import android.annotation.SuppressLint;
+ import android.app.Activity;
+@@ -82,6 +85,9 @@ import com.particlesdevs.photoncamera.api.Settings;
+ import com.particlesdevs.photoncamera.api.VendorTagUtils;
+ import com.particlesdevs.photoncamera.api.LogicalCameraResolver;
+ import com.particlesdevs.photoncamera.app.PhotonCamera;
++import com.particlesdevs.photoncamera.m9.M9Config;
++import com.particlesdevs.photoncamera.m9.M9SubjectMotionAnalyzer;
++import com.particlesdevs.photoncamera.m9.preview.MonoLivePairDiagnostics1E;
+ import com.particlesdevs.photoncamera.circularbarlib.util.Motion;
+ import com.particlesdevs.photoncamera.circularbarlib.api.ManualModeConsole;
+ import com.particlesdevs.photoncamera.control.GyroBurst;
+@@ -370,6 +376,17 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+      */
+     public int mPreviewIso;
+     public Rational[] mPreviewTemp;
++    // MONOLIVEGL1E_LIVEPAIRDIAG1A: passive mirror of the exact GL1A exposure state.
++    private volatile int monoLivePairIntendedIso1E = -1;
++    private volatile long monoLivePairIntendedExposureNs1E = -1L;
++    private volatile int monoLivePairPreviewIso1E = -1;
++    private volatile long monoLivePairPreviewExposureNs1E = -1L;
++    private volatile double monoLivePairExposureScale1E = 1.0;
++    private volatile long monoLivePairPreviewSensorTimestampNs1E = -1L;
++    private volatile long monoLivePairPreviewUpdatedElapsedNs1E = -1L;
++    private volatile int monoLivePairPreviewAeState1E = -1;
++    private volatile int monoLivePairPreviewAwbState1E = -1;
++    private volatile int monoLivePairPreviewAfState1E = -1;
+     public ColorSpaceTransform mColorSpaceTransform;
+     /**
+      * A reference to the opened {@link CameraDevice}.
+@@ -435,6 +452,13 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+ //            msg.obj = reader;
+ //            mImageSaver.processingHandler.sendMessage(msg);
+             //processExecutor.execute(() -> mImageSaver.initProcess(reader));
++            if (M9Config.isCaptureTest()) {
++                Image image = null;
++                try { image = reader.acquireLatestImage(); if (image != null) M9SubjectMotionAnalyzer.onImage(image); }
++                catch (Exception ex) { Log.d(TAG, "M9 subject-motion analysis failed: " + Log.getStackTraceString(ex)); }
++                finally { if (image != null) image.close(); }
++                return;
++            }
+             mImageSaver.initProcess(reader);
+         }
+     };
+@@ -682,6 +706,9 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+             mFlashed = state != null && state == CaptureResult.FLASH_STATE_PARTIAL || state == CaptureResult.FLASH_STATE_FIRED;
+             mPreviewCaptureResult = result;
+             mPreviewCaptureRequest = request;
++            // MONOLIVEGL2A_RESULT_OBSERVE: immutable result data only; reject an obsolete session.
++            if (session == mCaptureSession) com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.observe(
++                    mCameraCharacteristicsMap.get(physicalID),request,result,logicalID,physicalID);
+ 
+             RggbChannelVector halGains = result.get(CaptureResult.COLOR_CORRECTION_GAINS);
+             ColorSpaceTransform halTransform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM);
+@@ -906,11 +933,15 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+ 
+     };
+     public CaptureController(Activity activity, ExecutorService processExecutor, CameraEventsListener cameraEventsListener) {
++        // MONOUPSTREAM1A: full-sensor RAW and preview agree; physical lenses remain available.
++        zoomController.setDigitalCropEnabled(!M9Config.usesM9Pipeline());
+         if(PhotonCamera.getSettings().previewFormat != 0) {
+             mPreviewTargetFormat = PhotonCamera.getSettings().previewFormat;
+         } else {
+             mPreviewTargetFormat = ImageFormat.JPEG;
+         }
++        // M9 recovery diagnostic YUV.
++        if (M9Config.isCaptureTest()) { mPreviewTargetFormat = ImageFormat.YUV_420_888; M9SubjectMotionAnalyzer.reset(); }
+         this.activity = activity;
+         this.cameraEventsListener = cameraEventsListener;
+         this.mTextureView = activity.findViewById(R.id.texture);
+@@ -1164,6 +1195,7 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+      * Closes the current {@link CameraDevice}.
+      */
+     public void closeCamera() {
++        invalidateMonoExposurePlan1A();
+         mCameraOpening.set(false);
+         isCameraResumed = false;
+         cancelLogicalZoom();
+@@ -1369,6 +1401,12 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+         }
+         try {
+ //            mCaptureSession.stopRepeating();
++            if (!mIsRecordingVideo) com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.configure(
++                    mPreviewRequestBuilder,mCameraCharacteristicsMap.get(physicalID),logicalID,physicalID,false);
++            if(useMonoExposurePlan1A()) {
++                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON);
++                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,0);
++            }
+             mPreviewInputRequest = mPreviewRequestBuilder.build();
+             submitVideoRepeating();
+         } catch (IllegalStateException | IllegalArgumentException | NullPointerException e) {
+@@ -2948,6 +2986,14 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+                         // Lens-shading stats cost DMA/CPU per frame and nothing
+                         // consumes the map on the repeating video path: keep it
+                         // for still/photo sessions, skip it while recording.
++                        // MONOLIVEGL2A_REQUEST: only the live preview input response changes.
++                        invalidateMonoExposurePlan1A();
++                        if(useMonoExposurePlan1A()) {
++                            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON);
++                            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,0);
++                        }
++                        if (!mIsRecordingVideo) com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.configure(
++                                mPreviewRequestBuilder,mCameraCharacteristicsMap.get(physicalID),logicalID,physicalID,true);
+                         //if(isZslMode()){
+                         if (!mIsRecordingVideo) {
+                             try {
+@@ -3187,6 +3233,9 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+            if(PhotonCamera.getSettings().previewFormat == 0) {
+                 surfaces = Arrays.asList(surface, mImageReaderRaw.getSurface());
+            }
++           // M9 recovery analysis surface
++
++           if (M9Config.isCaptureTest()) { surfaces = Arrays.asList(surface, mImageReaderPreview.getSurface(), mImageReaderRaw.getSurface()); }
+         }
+         if (mIsRecordingVideo) {
+             // Resolve the 10-bit session profile BEFORE preparing the encoder
+@@ -3563,6 +3612,8 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+         }
+ 
+         mPreviewRequestBuilder.addTarget(surface);
++        // M9 recovery repeating analysis target
++        if (M9Config.isCaptureTest() && mImageReaderPreview != null) mPreviewRequestBuilder.addTarget(mImageReaderPreview.getSurface());
+         synchronized (mZslBufferLock) {
+             while (!mZslRingBuffer.isEmpty()) {
+                 Image img = mZslRingBuffer.pollFirst();
+@@ -3613,6 +3664,8 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+             Log.w(TAG, "takePicture(): camera not ready, ignoring shutter press");
+             return;
+         }
++        // MONOOUTPUT1B_ADMISSION: keep bounded durable storage; do not silently drop derived RAW.
++        if (!com.particlesdevs.photoncamera.m9.export.MonoDngExport1A.admitCapture1B()) return;
+         if (isZslMode()) {
+             captureStillPicture();
+             return;
+@@ -3835,6 +3888,34 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+         mZslCapturing = true;
+         burst = false;
+ 
++        // MONOLIVEGL1E_LIVEPAIRDIAG1C_ZSL
++        // Motion mode is ZSL: capture uses buffered preview RAW frames and
++        // therefore never reaches the non-ZSL capture callback below.
++        final long monoZslShutterElapsedNs1E = SystemClock.elapsedRealtimeNanos();
++        final long monoZslShutterWallMs1E = System.currentTimeMillis();
++        final IsoExpoSelector.ExpoPair monoZslSelector1E =
++                IsoExpoSelector.GenerateExpoPair(-1, this);
++        final int monoZslSelectorIso1E = monoZslSelector1E != null
++                ? monoZslSelector1E.iso : -1;
++        final long monoZslSelectorExposureNs1E = monoZslSelector1E != null
++                ? monoZslSelector1E.exposure : -1L;
++        final CaptureResult monoZslResult1E = mPreviewCaptureResult;
++        final CaptureRequest monoZslRequest1E = mPreviewCaptureRequest;
++        final int monoZslRotation1E =
++                PhotonCamera.getGravity().getCameraRotation(mSensorOrientation);
++        final String monoZslPhysicalId1E = physicalID;
++        final org.json.JSONObject monoZslSnapshot1E =
++                MonoLivePairDiagnostics1E.capturePreviewSnapshot(
++                        monoZslShutterElapsedNs1E, monoZslShutterWallMs1E,
++                        monoLivePairIntendedIso1E, monoLivePairIntendedExposureNs1E,
++                        monoZslSelectorIso1E, monoZslSelectorExposureNs1E,
++                        monoLivePairPreviewIso1E, monoLivePairPreviewExposureNs1E,
++                        1.0, monoLivePairPreviewSensorTimestampNs1E,
++                        monoLivePairPreviewUpdatedElapsedNs1E,
++                        monoLivePairPreviewAeState1E, monoLivePairPreviewAwbState1E,
++                        monoLivePairPreviewAfState1E,
++                        monoZslPhysicalId1E, monoZslRotation1E);
++
+         int frameCount = FrameNumberSelector.getFrames();
+         cameraRotation = PhotonCamera.getGravity().getCameraRotation(mSensorOrientation);
+         BurstShakiness = new ArrayList<>();
+@@ -3874,7 +3955,8 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+             Image img = rawImages.get(i);
+             int rowStride = img.getPlanes()[0].getRowStride();
+             int pixelStride = img.getPlanes()[0].getPixelStride();
+-            int width = (img.getFormat() == ImageFormat.RAW10)
++            int width = (img.getFormat() == ImageFormat.RAW10
++                    || img.getFormat() == ImageFormat.RAW_SENSOR)
+                     ? img.getWidth()
+                     : (pixelStride > 0 ? rowStride / pixelStride : img.getWidth());
+             int height = img.getHeight();
+@@ -3956,6 +4038,16 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+         }
+         cameraEventsListener.onCaptureSequenceCompleted(null);
+ 
++        // ZSL has no dedicated still CaptureCallback. Persist against the
++        // latest preview request/result; exact RAW timestamp matching is checked at export.
++        if (monoZslRequest1E != null && monoZslResult1E != null) {
++            MonoLivePairDiagnostics1E.writeCompleted(
++                    monoZslSnapshot1E, monoZslRequest1E, monoZslResult1E,
++                    monoZslPhysicalId1E, monoZslRotation1E);
++        } else {
++            Log.w(TAG, "MONOLIVEGL1E ZSL sidecar skipped: preview request/result unavailable");
++        }
++
+         long[] frameTimestamps = new long[actualCount];
+         for (int i = 0; i < actualCount; i++) {
+             frameTimestamps[i] = selected.get(i).timestamp;
+@@ -3991,16 +4083,113 @@ public class CaptureController implements MediaRecorder.OnInfoListener {
+         });
+     }
+ 
++    // MONOAUTO1A_EXPOSUREPLAN: local camera/control lifetime, shared with the GL draw.
++    private final MonoExposureStore1A monoExposureStore1A = new MonoExposureStore1A();
++    public MonoExposureStore1A getMonoExposureStore1A() { return monoExposureStore1A; }
++    public void invalidateMonoExposurePlan1A() { monoExposureStore1A.invalidate(); }
++    public boolean useMonoExposurePlan1A() {
++        return M9Config.usesM9Pipeline() && PhotonCamera.getSettings().selectedMode == CameraMode.PHOTO
++                && !isDualSession && !mIsRecordingVideo && !mFlashed;
++    }
++    public String monoCameraKey1A() { return logicalID+"/"+physicalID; }
++    public CameraCharacteristics monoCharacteristics1A() { return mCameraCharacteristicsMap.get(physicalID); }
++    public MonoExposurePlan1A.Controls monoControls1A() {
++        String metering=String.valueOf(System.identityHashCode(mCaptureSession));
++        if(mPreviewRequestBuilder!=null) {
++            metering+="|"+mPreviewRequestBuilder.get(CaptureRequest.SCALER_CROP_REGION);
++            metering+="|"+java.util.Arrays.toString(mPreviewRequestBuilder.get(CaptureRequest.CONTROL_AE_REGIONS));
++            if(Build.VERSION.SDK_INT>=30) metering+="|"+mPreviewRequestBuilder.get(CaptureRequest.CONTROL_ZOOM_RATIO);
++        }
++        metering+="|monoTapEpoch="+com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A
++                .controlEpoch(SystemClock.elapsedRealtimeNanos());
++        return new MonoExposurePlan1A.Controls(PhotonCamera.getSettings().selectedMode.name(),
++                paramController.getMonoUserEv1A(),(long)paramController.getCurrentExposureValue(),
++                (int)paramController.getCurrentISOValue(),
++                PhotonCamera.getGyro()!=null && PhotonCamera.getGyro().getTripod(),
++                exposureBalanceMultiplier,exposureBalanceIsoLimit,exposureBalanceShutterLimit,oisMode,metering);
++    }
++    public MonoExposurePlan1A getMonoExposurePlan1A() {
++        if(!useMonoExposurePlan1A()) return null;
++        monoExposureStore1A.context(monoCameraKey1A(),monoControls1A());
++        return monoExposureStore1A.latest(SystemClock.elapsedRealtimeNanos());
++    }
++    public MonoExposurePlan1A updateMonoExposurePlan1A(CaptureResult observation) {
++        if(!useMonoExposurePlan1A()) {monoExposureStore1A.invalidate();return null;}
++        MonoExposurePlan1A.Controls controls=monoControls1A();
++        String camera=monoCameraKey1A();
++        long token=monoExposureStore1A.context(camera,controls);
++        MonoExposurePlan1A plan=IsoExpoSelector.planMonoExposure1A(this,observation,camera,token,controls);
++        // Allocation can overlap a dial change/camera reopen: never publish across that boundary.
++        monoExposureStore1A.context(monoCameraKey1A(),monoControls1A());
++        return monoExposureStore1A.publish(plan,SystemClock.elapsedRealtimeNanos())?plan:null;
++    }
++    private MonoExposureStore1A.Selection selectMonoCapturePlan1A(long shutterNs) {
++        if(!useMonoExposurePlan1A()) return null;
++        final String camera1E=monoCameraKey1A();
++        monoExposureStore1A.context(camera1E,monoControls1A());
++        MonoExposureStore1A.Selection selected=monoExposureStore1A.select(shutterNs);
