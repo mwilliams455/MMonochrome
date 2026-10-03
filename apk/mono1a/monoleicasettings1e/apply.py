@@ -280,7 +280,8 @@ slow_helper = r'''    private static int effectiveMonoAutoIsoCap1E(MonoInput1A i
     private static boolean applyMonoSlowestSpeed1E(ExpoPair pair,MonoInput1A input) {
         if(pair==null||input==null||input.controls.manualIso>0||input.controls.manualExposureNs>0)return false;
         long threshold=Math.max(input.timeLow,Math.min(input.timeHigh,input.controls.slowestSpeedNs));
-        if(pair.exposure<=threshold)return false;
+        // Ignore nanosecond-scale integer division noise around nominal shutter fractions.
+        if(pair.exposure<=threshold+1000L)return false;
         int cap=effectiveMonoAutoIsoCap1E(input);
         if(pair.iso>=cap)return false;
 
@@ -306,7 +307,7 @@ slow_helper = r'''    private static int effectiveMonoAutoIsoCap1E(MonoInput1A i
     private static boolean monoSlowestExceededAtIsoMax1E(ExpoPair pair,MonoInput1A input) {
         if(pair==null||input==null||input.controls.manualIso>0||input.controls.manualExposureNs>0)return false;
         long threshold=Math.max(input.timeLow,Math.min(input.timeHigh,input.controls.slowestSpeedNs));
-        return pair.exposure>threshold && pair.iso>=effectiveMonoAutoIsoCap1E(input);
+        return pair.exposure>threshold+1000L && pair.iso>=effectiveMonoAutoIsoCap1E(input);
     }
 
 '''
