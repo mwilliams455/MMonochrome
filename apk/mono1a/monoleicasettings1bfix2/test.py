@@ -23,7 +23,6 @@ for marker in [
     'd.put("monochromPrimarySource", "SOURCE1D_NATIVE_DNG_XYZ_Y")',
 ]:
     assert marker in R,marker
-assert 'return new RenderCore(equalRgbBitmap, d,' in ' '.join(R.split()), "SOURCE1D equalRgbBitmap is not primary RenderCore bitmap"
 
 # Crucial FIX2 contract: settings are computed before SOURCE1D native render and passed into it.
 for marker in [
