@@ -297,7 +297,6 @@ anchor='''        if(com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.in
 replacement='''        if(captureController.isMonoAeLock1F()) {
             com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.clear("ae_lock_focus_only");
             if(autofocus)processTouchToFocus(x,y);
-            textureView.requestRender();
             return true;
         }
 '''+anchor
