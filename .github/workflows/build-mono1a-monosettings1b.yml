@@ -1,0 +1,175 @@
+name: Build MMonochrome MONOSETTINGS1B Top-Bar Settings
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/monosettings1b-topbar-settings]
+    paths:
+      - 'apk/mono1a/monosettings1b/**'
+      - '.github/workflows/build-mono1a-monosettings1b.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-settings1b-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlay
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout frozen Android scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout pinned portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Assemble exact validated MONOTAPMETER1B parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/monosettings1a/*.py apk/mono1a/monosettings1b/*.py
+          python3 -u - <<'PY' 2>&1 | tee MONOSETTINGS1B_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monotapmeter1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0
+          count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1
+                  continue
+              i+=1
+              block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):
+                      block.append(line[10:])
+                  elif not line.strip():
+                      block.append('')
+                  else:
+                      raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/monosettings1b-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==4,count
+          print('MONOTAPMETER1B parent assembly/tests PASS')
+          PY
+
+      - name: Replay validated MONOSETTINGS1A cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 -u apk/mono1a/monosettings1a/apply.py "$ROOT" 2>&1 | tee MONOSETTINGS1B_1A_APPLY.txt
+          python3 -u apk/mono1a/monosettings1a/test.py "$ROOT" 2>&1 | tee MONOSETTINGS1B_1A_TESTS.txt
+
+      - name: Apply M9-style top-bar Settings button
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          python3 -u apk/mono1a/monosettings1b/apply.py "$ROOT" 2>&1 | tee MONOSETTINGS1B_APPLY.txt
+          python3 -u apk/mono1a/monosettings1b/test.py "$ROOT" 2>&1 | tee MONOSETTINGS1B_TESTS.txt
+
+      - name: Snapshot evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/m9base/PhotonCamera"
+          OUT="$GITHUB_WORKSPACE/monosettings1b-evidence"
+          mkdir -p "$OUT/source"
+          cp "$ROOT/MONOSETTINGS1A_ISOLATION.json" "$ROOT/MONOSETTINGS1A_TEST_REPORT.json" "$OUT/"
+          cp "$ROOT/MONOSETTINGS1B_ISOLATION.json" "$ROOT/MONOSETTINGS1B_TEST_REPORT.json" "$OUT/"
+          cp apk/mono1a/monosettings1b/*.py apk/mono1a/monosettings1b/README.md "$OUT/"
+          cp "$ROOT/app/src/main/res/layout/layout_main_topbar.xml" "$OUT/source/"
+          printf 'REVISION=MONOSETTINGS1B_TOPBAR_SETTINGS1A\nPARENT=MONOSETTINGS1A_LEICA_UI_CLEANUP\nSETTINGS_VISIBLE=1\nSETTINGS_POSITION=RIGHT_OF_FLASH\nSECURE_GUARD_CHANGED=0\nRENDER_CHANGED=0\nDNG_PIXEL_MATH_CHANGED=0\nEXPOSURE_PLACEMENT_CHANGED=0\nCURVE02_CHANGED=0\n' > "$OUT/PROVENANCE.txt"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Build MONOSETTINGS1B APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd m9base/PhotonCamera
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONOSETTINGS1B_GRADLE.log"
+
+      - name: Verify and package APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' 2>&1 | tee MONOSETTINGS1B_APK_PROOF.txt
+          from pathlib import Path
+          import hashlib,json,shutil
+          root=Path('m9base/PhotonCamera')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'))
+          assert len(apks)==1,apks
+          proof=json.loads((root/'MONOSETTINGS1B_ISOLATION.json').read_text())
+          for rel,expected in proof['frozenPhotographicHashes'].items():
+              assert hashlib.sha256((root/rel).read_bytes()).hexdigest()==expected,rel
+          assert proof['settingsButtonVisible']
+          assert proof['settingsButtonRightOfFlash']
+          out=Path('MMonochrome_MONOSETTINGS1B_TOPBAR_SETTINGS1A.apk')
+          shutil.copyfile(apks[0],out)
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MONOSETTINGS1B_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS MONOSETTINGS1B package',digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOSETTINGS1B-TOPBAR-SETTINGS-EVIDENCE
+          path: |
+            MONOSETTINGS1B_*.log
+            MONOSETTINGS1B_*.txt
+            monosettings1b-evidence/
+          if-no-files-found: warn
+
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONOSETTINGS1B-TOPBAR-SETTINGS
+          path: |
+            MMonochrome_MONOSETTINGS1B_TOPBAR_SETTINGS1A.apk
+            MONOSETTINGS1B_APK_SHA256.txt
+            MONOSETTINGS1B_APK_PROOF.txt
+            monosettings1b-evidence/PROVENANCE.txt
+          if-no-files-found: error
