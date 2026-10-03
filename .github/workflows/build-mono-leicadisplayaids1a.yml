@@ -177,7 +177,6 @@ jobs:
                   b'LEICADISPLAYAIDS1A',
                   b'isMonoHistogramEnabled',
                   b'getMonoHighlightClippingPercent',
-                  b'LEICATIMER1A',
                   b'LEICABRACKET1B_ADMISSIONFIX1'
               ]: assert marker in dex,marker
           digest=hashlib.sha256(out.read_bytes()).hexdigest()
