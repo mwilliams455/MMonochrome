@@ -118,27 +118,12 @@ jobs:
           python3 -u apk/mono1a/monosettings1b/apply.py "$ROOT" | tee LEICACONTRAST1A_SETTINGS1B_APPLY.txt
           python3 -u apk/mono1a/monosettings1b/test.py "$ROOT" | tee LEICACONTRAST1A_SETTINGS1B_TEST.txt
 
-      - name: Generate exact Leica Contrast curves from official firmware
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/leica"
-          curl -fL --retry 3 --retry-delay 2             -o "$RUNNER_TEMP/leica/Mm-1_022.upm"             "https://leica-camera.com/sites/default/files/Mm-1_022.upm"
-          curl -fL --retry 3 --retry-delay 2             -o "$RUNNER_TEMP/leica/m9-1_216.upd"             "https://leica-camera.com/sites/default/files/m9-1_216.upd"
-          echo "53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  $RUNNER_TEMP/leica/Mm-1_022.upm" | sha256sum -c -
-          echo "c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  $RUNNER_TEMP/leica/m9-1_216.upd" | sha256sum -c -
-          python3 tools/recover_leica_m9_mm_shared_key.py             "$RUNNER_TEMP/leica/m9-1_216.upd"             "$RUNNER_TEMP/leica/Mm-1_022.upm"             --mm-out "$RUNNER_TEMP/leica/mm.dec"             --m9-out "$RUNNER_TEMP/leica/m9.dec"             --meta-out "$RUNNER_TEMP/leica/decrypt.json"             | tee LEICACONTRAST1A_FIRMWARE_DECRYPT.txt
-          python3 tools/generate_mm_contrast_curves.py             "$RUNNER_TEMP/leica/mm.dec"             --cpp-out modern/app/src/main/cpp/mm_monochrom_contrast_curves.inc             --asset-out modern/app/src/main/assets/mono/mono_contrast_curves.bin             --java-out modern/app/src/main/java/com/particlesdevs/photoncamera/m9/render/MonoContrastCurves1A.java             --report-out LEICACONTRAST1A_CURVES.json             | tee LEICACONTRAST1A_CURVES.txt
-          rm -f "$RUNNER_TEMP/leica/Mm-1_022.upm" "$RUNNER_TEMP/leica/m9-1_216.upd"                 "$RUNNER_TEMP/leica/mm.dec" "$RUNNER_TEMP/leica/m9.dec"
-          test ! -e "$RUNNER_TEMP/leica/Mm-1_022.upm"
-          test ! -e "$RUNNER_TEMP/leica/mm.dec"
-
       - name: Apply Leica Contrast setting
         shell: bash
         run: |
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/modern"
-          python3 -m py_compile apk/mono1a/monoleicasettings1a/*.py tools/generate_mm_contrast_curves.py
+          python3 -m py_compile apk/mono1a/monoleicasettings1a/*.py
           python3 -u apk/mono1a/monoleicasettings1a/apply.py "$ROOT" | tee LEICACONTRAST1A_APPLY.txt
           python3 -u apk/mono1a/monoleicasettings1a/test.py "$ROOT" | tee LEICACONTRAST1A_TEST.txt
 
@@ -186,7 +171,9 @@ jobs:
             'otherFrozenMonochromFilesByteIdentical':True,
             'dngAndExposureByteIdentical':True,
             'contrastSelector':'normal ISO / sRGB / nContrast 0..4',
-            'default':'Standard / enum 2'
+            'default':'Standard / enum 2',
+            'firmwareCurveBytesStoredInGit':False,
+            'curveBankPostPackRequired':True
           },indent=2))
           PY
 
@@ -215,29 +202,35 @@ jobs:
           cd modern
           ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICACONTRAST1A_GRADLE.log"
 
-      - name: Package and inspect APK
+      - name: Package firmware-free post-pack base APK
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY' | tee LEICACONTRAST1A_APK_PROOF.txt
+          python3 - <<'PY' | tee LEICACONTRAST1A_BASE_APK_PROOF.txt
           from pathlib import Path
           import hashlib,shutil,zipfile
           root=Path('modern')
           apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'))
           assert len(apks)==1,apks
-          out=Path('MMonochrome_LEICACONTRAST1A_MODERNUI.apk')
+          out=Path('MMonochrome_LEICACONTRAST1A_POSTPACK_BASE.apk')
           shutil.copyfile(apks[0],out)
           with zipfile.ZipFile(out) as z:
               dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
               assert b'MonoContrastCurves1A' in dex
               assert b'firmware_normalISO_sRGB_curve0' in dex
               names=set(z.namelist())
-              assert 'assets/mono/mono_contrast_curves.bin' in names
-              assert len(z.read('assets/mono/mono_contrast_curves.bin'))==10240
+              assert 'assets/mono/mono_contrast_curves.bin' not in names
           digest=hashlib.sha256(out.read_bytes()).hexdigest()
-          Path('LEICACONTRAST1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
-          print('PASS',out.name,digest,out.stat().st_size)
+          Path('LEICACONTRAST1A_BASE_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          Path('LEICACONTRAST1A_POSTPACK_REQUIRED.txt').write_text(
+              'Inject assets/mono/mono_contrast_curves.bin (10240 bytes, SHA-256 ac010ac0a107fb4b98ed817f24b4b9ab2d739fcfd70571b4f7d8375335e293c6), zipalign, then sign with the existing PhotonCamera key.\n')
+          print('PASS firmware-free base',out.name,digest,out.stat().st_size)
           PY
+          mkdir -p postpack-tools/lib
+          cp "$ANDROID_HOME/build-tools/35.0.0/apksigner" postpack-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" postpack-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" postpack-tools/lib/
+          chmod +x postpack-tools/apksigner postpack-tools/zipalign
 
       - name: Upload evidence
         if: always()
@@ -250,15 +243,16 @@ jobs:
             LEICACONTRAST1A_*.json
           if-no-files-found: warn
 
-      - name: Upload APK
+      - name: Upload post-pack base and signing tools
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: MMonochrome-LEICACONTRAST1A-MODERNUI
+          name: MMonochrome-LEICACONTRAST1A-POSTPACK-BASE
           path: |
-            MMonochrome_LEICACONTRAST1A_MODERNUI.apk
-            LEICACONTRAST1A_APK_SHA256.txt
-            LEICACONTRAST1A_APK_PROOF.txt
+            MMonochrome_LEICACONTRAST1A_POSTPACK_BASE.apk
+            LEICACONTRAST1A_BASE_APK_SHA256.txt
+            LEICACONTRAST1A_BASE_APK_PROOF.txt
             LEICACONTRAST1A_POLICY_PROOF.txt
-            LEICACONTRAST1A_CURVES.json
+            LEICACONTRAST1A_POSTPACK_REQUIRED.txt
+            postpack-tools/
           if-no-files-found: error
