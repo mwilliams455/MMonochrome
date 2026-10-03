@@ -1,0 +1,264 @@
+name: Build MMonochrome LEICACONTRAST1A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-leicasettings1a-contrast]
+    paths:
+      - 'apk/mono1a/upstream1b/**'
+      - 'apk/mono1a/monosettings1a/**'
+      - 'apk/mono1a/monosettings1b/**'
+      - 'apk/mono1a/monoleicasettings1a/**'
+      - 'tools/generate_mm_contrast_curves.py'
+      - '.github/workflows/build-mono-leicacontrast1a.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-leicacontrast1a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Checkout pinned Monochrom portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact validated MONOTAPMETER1B parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee LEICACONTRAST1A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monotapmeter1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1; continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-contrast-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==4,count
+          print('MONOTAPMETER1B parent PASS')
+          PY
+
+      - name: Reconstruct published M9 modern source for pinned headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 m9upstream/patches/upstream2r_fix1/assemble.py "$GITHUB_WORKSPACE/m9modern"
+
+      - name: Checkout exact modern Photon base
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout --depth 1 --branch dev https://github.com/eszdman/PhotonCamera.git "$GITHUB_WORKSPACE/modern"
+          git -C "$GITHUB_WORKSPACE/modern" fetch --depth 1 origin 4ee108e169496f429c0afa0cc33e57bb6b2ec724
+          git -C "$GITHUB_WORKSPACE/modern" checkout --detach 4ee108e169496f429c0afa0cc33e57bb6b2ec724
+          test "$(git -C "$GITHUB_WORKSPACE/modern" rev-parse HEAD)" = "4ee108e169496f429c0afa0cc33e57bb6b2ec724"
+
+      - name: Restore exact September modern Monochrom merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u apk/mono1a/upstream1b/reconstruct.py             "$GITHUB_WORKSPACE/m9base/PhotonCamera"             "$GITHUB_WORKSPACE/modern"             "$GITHUB_WORKSPACE/m9modern" | tee LEICACONTRAST1A_RECONSTRUCT.txt
+
+      - name: Replay approved modern settings cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -u apk/mono1a/monosettings1a/apply.py "$ROOT" | tee LEICACONTRAST1A_SETTINGS1A_APPLY.txt
+          python3 -u apk/mono1a/monosettings1a/test.py "$ROOT" | tee LEICACONTRAST1A_SETTINGS1A_TEST.txt
+          python3 -u apk/mono1a/monosettings1b/apply.py "$ROOT" | tee LEICACONTRAST1A_SETTINGS1B_APPLY.txt
+          python3 -u apk/mono1a/monosettings1b/test.py "$ROOT" | tee LEICACONTRAST1A_SETTINGS1B_TEST.txt
+
+      - name: Generate exact Leica Contrast curves from official firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/leica"
+          curl -fL --retry 3 --retry-delay 2             -o "$RUNNER_TEMP/leica/Mm-1_022.upm"             "https://leica-camera.com/sites/default/files/Mm-1_022.upm"
+          curl -fL --retry 3 --retry-delay 2             -o "$RUNNER_TEMP/leica/m9-1_216.upd"             "https://leica-camera.com/sites/default/files/m9-1_216.upd"
+          echo "53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  $RUNNER_TEMP/leica/Mm-1_022.upm" | sha256sum -c -
+          echo "c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  $RUNNER_TEMP/leica/m9-1_216.upd" | sha256sum -c -
+          python3 tools/recover_leica_m9_mm_shared_key.py             "$RUNNER_TEMP/leica/m9-1_216.upd"             "$RUNNER_TEMP/leica/Mm-1_022.upm"             --mm-out "$RUNNER_TEMP/leica/mm.dec"             --m9-out "$RUNNER_TEMP/leica/m9.dec"             --meta-out "$RUNNER_TEMP/leica/decrypt.json"             | tee LEICACONTRAST1A_FIRMWARE_DECRYPT.txt
+          python3 tools/generate_mm_contrast_curves.py             "$RUNNER_TEMP/leica/mm.dec"             --cpp-out modern/app/src/main/cpp/mm_monochrom_contrast_curves.inc             --asset-out modern/app/src/main/assets/mono/mono_contrast_curves.bin             --java-out modern/app/src/main/java/com/particlesdevs/photoncamera/m9/render/MonoContrastCurves1A.java             --report-out LEICACONTRAST1A_CURVES.json             | tee LEICACONTRAST1A_CURVES.txt
+          rm -f "$RUNNER_TEMP/leica/Mm-1_022.upm" "$RUNNER_TEMP/leica/m9-1_216.upd"                 "$RUNNER_TEMP/leica/mm.dec" "$RUNNER_TEMP/leica/m9.dec"
+          test ! -e "$RUNNER_TEMP/leica/Mm-1_022.upm"
+          test ! -e "$RUNNER_TEMP/leica/mm.dec"
+
+      - name: Apply Leica Contrast setting
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1a/*.py tools/generate_mm_contrast_curves.py
+          python3 -u apk/mono1a/monoleicasettings1a/apply.py "$ROOT" | tee LEICACONTRAST1A_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1a/test.py "$ROOT" | tee LEICACONTRAST1A_TEST.txt
+
+      - name: Set candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('modern/app/build.gradle')
+          s=p.read_text()
+          s,n=re.subn(r'versionCode\s+\d+', 'versionCode 26692', s, count=1); assert n==1,n
+          s,n=re.subn(r"versionName\s+'[^']+'", "versionName '0.08-monochrome-modernui1a-leicacontrast1a'", s, count=1); assert n==1,n
+          p.write_text(s)
+          PY
+
+      - name: Verify allowed source changes only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICACONTRAST1A_POLICY_PROOF.txt
+          from pathlib import Path
+          import hashlib,json
+          root=Path('modern')
+          frozen=json.loads(Path('apk/mono1a/upstream1b/frozen_monochrome.json').read_text())
+          allowed={
+            'app/src/main/cpp/m9color_jni.cpp',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoGpuPreview2A.java',
+          }
+          mismatches=[]
+          for rel,want in frozen.items():
+              got=hashlib.sha256((root/rel).read_bytes()).hexdigest()
+              if got!=want and rel not in allowed: mismatches.append((rel,got,want))
+          assert not mismatches,mismatches
+          proof=json.loads((root/'LEICACONTRAST1A_ISOLATION.json').read_text())
+          assert proof['jpegUsesSelectedCurve'] and proof['previewUsesSelectedCurve']
+          assert not proof['dngToneChanged'] and not proof['sharpnessChanged'] and not proof['toningChanged']
+          print(json.dumps({
+            'revision':'LEICACONTRAST1A_POLICY',
+            'modernPhotonCommit':'4ee108e169496f429c0afa0cc33e57bb6b2ec724',
+            'allowedFrozenFileChanges':sorted(allowed),
+            'otherFrozenMonochromFilesByteIdentical':True,
+            'dngAndExposureByteIdentical':True,
+            'contrastSelector':'normal ISO / sRGB / nContrast 0..4',
+            'default':'Standard / enum 2'
+          },indent=2))
+          PY
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Run modern Monochrom regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest             --tests '*ZoomControllerTest'             --tests '*MonoUpstream1A*'             --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICACONTRAST1A_GRADLE_TESTS.log"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICACONTRAST1A_GRADLE.log"
+
+      - name: Package and inspect APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICACONTRAST1A_APK_PROOF.txt
+          from pathlib import Path
+          import hashlib,shutil,zipfile
+          root=Path('modern')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'))
+          assert len(apks)==1,apks
+          out=Path('MMonochrome_LEICACONTRAST1A_MODERNUI.apk')
+          shutil.copyfile(apks[0],out)
+          with zipfile.ZipFile(out) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              assert b'MonoContrastCurves1A' in dex
+              assert b'firmware_normalISO_sRGB_curve0' in dex
+              names=set(z.namelist())
+              assert 'assets/mono/mono_contrast_curves.bin' in names
+              assert len(z.read('assets/mono/mono_contrast_curves.bin'))==10240
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('LEICACONTRAST1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS',out.name,digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICACONTRAST1A-EVIDENCE
+          path: |
+            LEICACONTRAST1A_*.log
+            LEICACONTRAST1A_*.txt
+            LEICACONTRAST1A_*.json
+          if-no-files-found: warn
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICACONTRAST1A-MODERNUI
+          path: |
+            MMonochrome_LEICACONTRAST1A_MODERNUI.apk
+            LEICACONTRAST1A_APK_SHA256.txt
+            LEICACONTRAST1A_APK_PROOF.txt
+            LEICACONTRAST1A_POLICY_PROOF.txt
+            LEICACONTRAST1A_CURVES.json
+          if-no-files-found: error
