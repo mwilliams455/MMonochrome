@@ -214,10 +214,10 @@ s=one(s,
 s=one(s,
 "int32_t idx=v>>3;if(idx>2047)idx=2047;const uint8_t yy=contrastCurve[static_cast<size_t>(idx)];if(yy>=250)near++;\n                    const size_t p=row+static_cast<size_t>(x);argb[p]=static_cast<jint>(0xff000000u|(uint32_t(yy)<<16)|(uint32_t(yy)<<8)|uint32_t(yy));",
 "int32_t idx=v>>3;if(idx>2047)idx=2047;const uint8_t yy=contrastCurve[static_cast<size_t>(idx)];if(yy>=250)near++;\n"
-"                    const uint8_t rr=clamp8(static_cast<int>(yy)+roundShift16(91881*dCr));\n"
-"                    const uint8_t gg=clamp8(static_cast<int>(yy)-roundShift16(22554*dCb+46802*dCr));\n"
-"                    const uint8_t bb=clamp8(static_cast<int>(yy)+roundShift16(116130*dCb));\n"
-"                    const size_t p=row+static_cast<size_t>(x);argb[p]=static_cast<jint>(0xff000000u|(uint32_t(rr)<<16)|(uint32_t(gg)<<8)|uint32_t(bb));",
+"                    const uint8_t outR=clamp8(static_cast<int>(yy)+roundShift16(91881*dCr));\n"
+"                    const uint8_t outG=clamp8(static_cast<int>(yy)-roundShift16(22554*dCb+46802*dCr));\n"
+"                    const uint8_t outB=clamp8(static_cast<int>(yy)+roundShift16(116130*dCb));\n"
+"                    const size_t p=row+static_cast<size_t>(x);argb[p]=static_cast<jint>(0xff000000u|(uint32_t(outR)<<16)|(uint32_t(outG)<<8)|uint32_t(outB));",
 "native YCrCb tint")
 native_cpp.write_text(s)
 
