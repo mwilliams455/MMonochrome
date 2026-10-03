@@ -18,22 +18,22 @@ native_java = root / "app/src/main/java/com/particlesdevs/photoncamera/m9/render
 native_cpp = root / "app/src/main/cpp/m9color_jni.cpp"
 preview_java = root / "app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoGpuPreview2A.java"
 main_renderer = root / "app/src/main/java/com/particlesdevs/photoncamera/ui/camera/views/viewfinder/MainRenderer.java"
-curve_inc = root / "app/src/main/cpp/mm_monochrom_contrast_curves.inc"
-curve_asset = root / "app/src/main/assets/mono/mono_contrast_curves.bin"
 curve_meta = root / "app/src/main/java/com/particlesdevs/photoncamera/m9/render/MonoContrastCurves1A.java"
 gradle = root / "app/build.gradle"
 required = [pref_xml, keys_xml, arrays_xml, strings_xml, pref_java, renderer, native_java,
-            native_cpp, preview_java, main_renderer, curve_inc, curve_asset, curve_meta, gradle]
+            native_cpp, preview_java, main_renderer, gradle]
 for p in required:
     if not p.is_file():
         raise SystemExit("LEICACONTRAST1A missing " + str(p))
 
-bank = curve_asset.read_bytes()
-if len(bank) != 5 * 2048:
-    raise SystemExit("LEICACONTRAST1A curve bank length mismatch")
-standard = bank[2*2048:3*2048]
-if hashlib.sha256(standard).hexdigest() != "7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752":
-    raise SystemExit("LEICACONTRAST1A Standard curve02 mismatch")
+CURVE_SHA256 = [
+    "b836ab85030a67633bbd3d0b4f7cc7b238e288b33f8b30ef41c51339538f9a94",
+    "b76e1faf8016b6667415e4d1b7b8c12853763dacc764ec1fa4f7371cd08e7773",
+    "7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752",
+    "68a8ac917fa13bb6ca030a436a42b8fd588561e0fc2ca032470d27ea36432c97",
+    "d26670886bdbbaa2e61fe0696d523b2e8dedd8476b75301bbd3c9049106671fb",
+]
+BANK_SHA256 = "ac010ac0a107fb4b98ed817f24b4b9ab2d739fcfd70571b4f7d8375335e293c6"
 
 def one(text, old, new, label):
     n = text.count(old)
@@ -47,6 +47,78 @@ def append_resource(path, fragment):
         raise SystemExit("LEICACONTRAST1A resource already applied: " + str(path))
     s = one(s, "</resources>", fragment + "\n</resources>", path.name)
     path.write_text(s)
+
+
+# Runtime metadata contains hashes/selector semantics only. The exact 10,240-byte
+# firmware-derived curve bank is intentionally post-packed into the APK and is
+# never stored in Git.
+curve_meta.parent.mkdir(parents=True, exist_ok=True)
+curve_meta.write_text("""package com.particlesdevs.photoncamera.m9.render;
+
+import com.particlesdevs.photoncamera.app.PhotonCamera;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.Locale;
+
+/** Leica M Monochrom 1.022 normal-ISO/sRGB Contrast selector metadata. */
+public final class MonoContrastCurves1A {
+    public static final int DEFAULT = 2;
+    public static final int CURVE_SIZE = 2048;
+    public static final int CURVE_COUNT = 5;
+    public static final String ASSET = "mono/mono_contrast_curves.bin";
+    public static final String BANK_SHA256 = "ac010ac0a107fb4b98ed817f24b4b9ab2d739fcfd70571b4f7d8375335e293c6";
+    public static final String[] SHA256 = new String[]{
+        "b836ab85030a67633bbd3d0b4f7cc7b238e288b33f8b30ef41c51339538f9a94",
+        "b76e1faf8016b6667415e4d1b7b8c12853763dacc764ec1fa4f7371cd08e7773",
+        "7a7ccd9021cf9881384b733236fe249d2088358705d8db282687e943aa990752",
+        "68a8ac917fa13bb6ca030a436a42b8fd588561e0fc2ca032470d27ea36432c97",
+        "d26670886bdbbaa2e61fe0696d523b2e8dedd8476b75301bbd3c9049106671fb"
+    };
+    public static final String[] LABELS = new String[]{"Low","Medium low","Standard","Medium high","High"};
+    private static volatile byte[] bank;
+
+    private MonoContrastCurves1A() {}
+
+    public static int clamp(int value) { return value < 0 ? 0 : (value > 4 ? 4 : value); }
+
+    private static String sha256(byte[] data) throws Exception {
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(data);
+        StringBuilder out = new StringBuilder();
+        for (byte b : hash) out.append(String.format(Locale.ROOT, "%02x", b & 255));
+        return out.toString();
+    }
+
+    public static byte[] loadBank() {
+        byte[] cached = bank;
+        if (cached != null) return cached;
+        synchronized (MonoContrastCurves1A.class) {
+            if (bank != null) return bank;
+            try (InputStream in = PhotonCamera.getAppContext().getAssets().open(ASSET)) {
+                byte[] data = new byte[CURVE_COUNT * CURVE_SIZE];
+                int offset = 0, n;
+                while (offset < data.length && (n = in.read(data, offset, data.length - offset)) > 0) offset += n;
+                if (offset != data.length || in.read() != -1) throw new IllegalStateException("Leica Contrast bank length");
+                if (!BANK_SHA256.equals(sha256(data))) throw new IllegalStateException("Leica Contrast bank checksum");
+                for (int i = 0; i < CURVE_COUNT; i++) {
+                    byte[] curve = Arrays.copyOfRange(data, i * CURVE_SIZE, (i + 1) * CURVE_SIZE);
+                    if (!SHA256[i].equals(sha256(curve))) throw new IllegalStateException("Leica Contrast curve checksum " + i);
+                }
+                bank = data;
+                return data;
+            } catch (Throwable t) {
+                throw new IllegalStateException("Leica Contrast firmware bank unavailable", t);
+            }
+        }
+    }
+
+    public static byte[] loadCurve(int selector) {
+        int value = clamp(selector);
+        byte[] data = loadBank();
+        return Arrays.copyOfRange(data, value * CURVE_SIZE, (value + 1) * CURVE_SIZE);
+    }
+}
+""")
 
 # ----- resources / modern Settings UI -----
 append_resource(keys_xml, """    <string name="pref_category_monochrom_key" translatable="false">pref_category_monochrom_key</string>
@@ -150,7 +222,7 @@ s = one(s,
                                                                   double representationScale, long[] stats);
 """,
     """                                                                  float neutralR, float neutralG, float neutralB,
-                                                                  double representationScale, int contrastSelector,
+                                                                  double representationScale, byte[] contrastCurve,
                                                                   long[] stats);
 """,
     "RAWSCALAR JNI declaration")
@@ -163,17 +235,19 @@ s = one(s,
 """,
     """        final int monoContrast1A = MonoContrastCurves1A.clamp(
                 com.particlesdevs.photoncamera.settings.PreferenceKeys.getMonoContrastValue());
+        final byte[] monoStandardCurve1A = MonoContrastCurves1A.loadCurve(MonoContrastCurves1A.DEFAULT);
+        final byte[] monoSelectedCurve1A = MonoContrastCurves1A.loadCurve(monoContrast1A);
         Bitmap rawScalar1ABitmap = null;
         Bitmap rawScalar1BBitmap = null;
 """,
     "renderer Contrast selection")
 s = one(s,
     "                    nativeShading.representationScale, rawScalar1AStats);\n",
-    "                    nativeShading.representationScale, MonoContrastCurves1A.DEFAULT, rawScalar1AStats);\n",
+    "                    nativeShading.representationScale, monoStandardCurve1A, rawScalar1AStats);\n",
     "RAWSCALAR diagnostic Standard")
 s = one(s,
     "                    nativeShading.representationScale, rawScalar1BStats);\n",
-    "                    nativeShading.representationScale, monoContrast1A, rawScalar1BStats);\n",
+    "                    nativeShading.representationScale, monoSelectedCurve1A, rawScalar1BStats);\n",
     "RAWSCALAR primary selected Contrast")
 s = one(s,
     '                rawScalar1B.put("curve", "same_frozen_Monochrom_curve02");\n'
@@ -194,35 +268,41 @@ s = one(s,
 renderer.write_text(s)
 
 s = native_cpp.read_text()
-if '#include "mm_monochrom_contrast_curves.inc"' in s:
-    raise SystemExit("LEICACONTRAST1A native include already present")
 s = one(s,
     "// SOURCE1E RAWSCALAR1A. Xiaomi CFA-to-scalar adapter; not Leica CCD spectral truth.\n",
-    '#include "mm_monochrom_contrast_curves.inc"\n\n'
-    "// LEICACONTRAST1A selects only the firmware tone table; Process_Contrast mode remains native 100% mode 0.\n"
+    "// LEICACONTRAST1A receives one hash-verified 2048-byte Leica tone table from the post-packed asset.\n"
+    "// Process_Contrast mode remains native 100% mode 0.\n"
     "// SOURCE1E RAWSCALAR1A. Xiaomi CFA-to-scalar adapter; not Leica CCD spectral truth.\n",
-    "native contrast include")
+    "native contrast marker")
 s = one(s,
     """        jfloat neutralR, jfloat neutralG, jfloat neutralB, jdouble representationScale,
         jlongArray statsArray) {
 """,
     """        jfloat neutralR, jfloat neutralG, jfloat neutralB, jdouble representationScale,
-        jint contrastSelector, jlongArray statsArray) {
+        jbyteArray contrastCurveArray, jlongArray statsArray) {
 """,
     "RAWSCALAR native signature")
 s = one(s,
     """    const double invR=static_cast<double>(neutralG)/static_cast<double>(neutralR);
     const double invB=static_cast<double>(neutralG)/static_cast<double>(neutralB);
 """,
-    """    const int monoContrast=std::max(0,std::min(4,static_cast<int>(contrastSelector)));
-    const uint8_t* contrastCurve=MM_MONO_CONTRAST_CURVES[monoContrast];
+    """    if (!contrastCurveArray || env->GetArrayLength(contrastCurveArray) != 2048) {
+        AndroidBitmap_unlockPixels(env,bitmap);
+        throwIllegalArgument(env, "MONO1A Contrast curve must be 2048 bytes");
+        return JNI_FALSE;
+    }
+    std::array<jbyte,2048> contrastBytes{};
+    env->GetByteArrayRegion(contrastCurveArray,0,2048,contrastBytes.data());
+    if (env->ExceptionCheck()) { AndroidBitmap_unlockPixels(env,bitmap); return JNI_FALSE; }
+    std::array<uint8_t,2048> contrastCurve{};
+    for (size_t i=0;i<contrastCurve.size();++i) contrastCurve[i]=static_cast<uint8_t>(contrastBytes[i]);
     const double invR=static_cast<double>(neutralG)/static_cast<double>(neutralR);
     const double invB=static_cast<double>(neutralG)/static_cast<double>(neutralB);
 """,
     "RAWSCALAR contrast pointer")
 s = one(s,
     "int32_t idx=v>>3;if(idx>2047)idx=2047;const uint8_t yy=MM_MONO1A_CURVE02[idx];if(yy>=250)near++;",
-    "int32_t idx=v>>3;if(idx>2047)idx=2047;const uint8_t yy=contrastCurve[idx];if(yy>=250)near++;",
+    "int32_t idx=v>>3;if(idx>2047)idx=2047;const uint8_t yy=contrastCurve[static_cast<size_t>(idx)];if(yy>=250)near++;",
     "RAWSCALAR selected curve")
 native_cpp.write_text(s)
 
@@ -277,7 +357,7 @@ old_loader = '''        try(java.io.InputStream in=mView.getContext().getAssets(
             monoCurveLoaded2A=true;
         } catch(Exception e) { Log.e("MonoGL2A","curve unavailable: "+e); }
 '''
-new_loader = '''        try(java.io.InputStream in=mView.getContext().getAssets().open("mono/mono_contrast_curves.bin")) {
+new_loader = '''        try(java.io.InputStream in=mView.getContext().getAssets().open(com.particlesdevs.photoncamera.m9.render.MonoContrastCurves1A.ASSET)) {
             byte[] data=new byte[5*2048]; int offset=0,n;
             while(offset<data.length && (n=in.read(data,offset,data.length-offset))>0) offset+=n;
             if(offset!=data.length || in.read()!=-1) throw new java.io.IOException("contrast_bank_length");
@@ -339,9 +419,12 @@ proof = {
     "processContrastMode": 0,
     "processContrastModeMeaning": "native_100_percent_resolution",
     "selector": "normal_ISO_sRGB_curve_index_equals_nContrast",
-    "firmwareCurveBankBytes": len(bank),
-    "firmwareCurveBankSha256": hashlib.sha256(bank).hexdigest(),
-    "standardCurve02Sha256": hashlib.sha256(standard).hexdigest(),
+    "firmwareCurveBankBytes": 10240,
+    "firmwareCurveBankSha256": BANK_SHA256,
+    "curveSha256": CURVE_SHA256,
+    "standardCurve02Sha256": CURVE_SHA256[2],
+    "firmwareCurveBytesStoredInGit": False,
+    "curveBankPostPackRequired": True,
     "jpegUsesSelectedCurve": True,
     "previewUsesSelectedCurve": True,
     "dngToneChanged": False,
