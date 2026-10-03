@@ -91,6 +91,15 @@ jobs:
           echo "CONFLICT_COUNT=$(grep -c . REBASE_CONFLICTS.txt || true)" | tee -a REBASE_RESULT.txt
           cat REBASE_APPLY.log
           cat REBASE_RESULT.txt
+          mkdir -p rebase-conflicts/base rebase-conflicts/modern rebase-conflicts/mono rebase-conflicts/markers
+          while IFS= read -r f; do
+            test -n "$f" || continue
+            mkdir -p "rebase-conflicts/base/$(dirname "$f")" "rebase-conflicts/modern/$(dirname "$f")" "rebase-conflicts/mono/$(dirname "$f")" "rebase-conflicts/markers/$(dirname "$f")"
+            git -C PhotonModern show ":1:$f" > "rebase-conflicts/base/$f" || true
+            git -C PhotonModern show ":2:$f" > "rebase-conflicts/modern/$f" || true
+            git -C PhotonModern show ":3:$f" > "rebase-conflicts/mono/$f" || true
+            cp "PhotonModern/$f" "rebase-conflicts/markers/$f"
+          done < REBASE_CONFLICTS.txt
           exit 0
       - name: Upload probe
         uses: actions/upload-artifact@v4
@@ -101,4 +110,5 @@ jobs:
             REBASE_APPLY.log
             REBASE_RESULT.txt
             REBASE_CONFLICTS.txt
+            rebase-conflicts/
           if-no-files-found: error
