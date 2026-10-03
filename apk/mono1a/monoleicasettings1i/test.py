@@ -39,7 +39,16 @@ assert (root/"app/src/main/res/drawable/ic_timer2s_mono.xml").is_file()
 assert (root/"app/src/main/res/drawable/ic_timer12s_mono.xml").is_file()
 
 bar=(J/"ui/camera/viewmodel/SettingsBarEntryProvider.java").read_text()
-method=bar[bar.index("private void createTimerEntry()"):bar.index("private void createSaveRawEntry()")]
+start=bar.index("private void createTimerEntry()")
+brace=bar.index("{",start);depth=0;end=None
+for i in range(brace,len(bar)):
+    if bar[i]=="{":depth+=1
+    elif bar[i]=="}":
+        depth-=1
+        if depth==0:
+            end=i+1;break
+assert end is not None
+method=bar[start:end]
 assert "R.string.t_2s" in method and "R.string.t_12s" in method
 assert "R.string.t_3s" not in method and "R.string.t_10s" not in method
 
