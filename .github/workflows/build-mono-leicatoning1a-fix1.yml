@@ -11,7 +11,7 @@ on:
       - 'apk/mono1a/monoleicasettings1a/**'
       - 'apk/mono1a/monoleicasettings1b/**'
       - 'apk/mono1a/monoleicasettings1bfix1/**'
-      - '.github/workflows/build-mono-leicatoning1a.yml'
+      - '.github/workflows/build-mono-leicatoning1a-fix1.yml'
 
 permissions:
   contents: read
