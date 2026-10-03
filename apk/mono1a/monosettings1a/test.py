@@ -85,10 +85,8 @@ for marker in [
     "frameCount = 1;",
     "binning = false;",
     "QuadBayer = false;",
-    "heicSave = false;",
     "hdrx = false;",
     "hdrxNR = false;",
-    "ultraHdr = false;",
     "watermark = false;",
     "aspect169 = false;",
 ]:
