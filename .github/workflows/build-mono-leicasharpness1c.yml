@@ -330,7 +330,7 @@ jobs:
               assert b'Medium high' in dex
               assert b'installVerifiedBank' in dex
               assert b'loadCurveOrNull' in dex
-              assert b'selected_portable_active_sensor_DNG_XYZ_Y_with_Leica_JPEG_contrast_and_toning_DNG_and_exposure_unchanged' in dex
+              assert b'selected_portable_active_sensor_DNG_XYZ_Y_with_Leica_JPEG_sharpness_contrast_toning_DNG_and_exposure_unchanged' in dex
               assert b'firmware_normalISO_sRGB_curve0' in dex
               assert b'Selenium Strong' in dex
               names=set(z.namelist())
