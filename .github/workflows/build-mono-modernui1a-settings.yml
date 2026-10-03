@@ -1,0 +1,236 @@
+name: Build MMonochrome MODERNUI1A Leica Settings Foundation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-upstream1b-modernui-settings]
+    paths:
+      - 'apk/mono1a/upstream1b/**'
+      - 'apk/mono1a/monosettings1a/**'
+      - 'apk/mono1a/monosettings1b/**'
+      - '.github/workflows/build-mono-modernui1a-settings.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-modernui1a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact validated MONOTAPMETER1B parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee MODERNUI1A_LEGACY_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monotapmeter1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1; continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-modern-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==4,count
+          print('MONOTAPMETER1B legacy parent PASS')
+          PY
+
+      - name: Reconstruct published M9 modern source for pinned headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 m9upstream/patches/upstream2r_fix1/assemble.py "$GITHUB_WORKSPACE/m9modern"
+
+      - name: Checkout exact modern Photon base
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout --depth 1 --branch dev https://github.com/eszdman/PhotonCamera.git "$GITHUB_WORKSPACE/modern"
+          git -C "$GITHUB_WORKSPACE/modern" fetch --depth 1 origin 4ee108e169496f429c0afa0cc33e57bb6b2ec724
+          git -C "$GITHUB_WORKSPACE/modern" checkout --detach 4ee108e169496f429c0afa0cc33e57bb6b2ec724
+          test "$(git -C "$GITHUB_WORKSPACE/modern" rev-parse HEAD)" = "4ee108e169496f429c0afa0cc33e57bb6b2ec724"
+
+      - name: Restore exact September modern Monochrom merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile apk/mono1a/upstream1b/reconstruct.py
+          python3 -u apk/mono1a/upstream1b/reconstruct.py             "$GITHUB_WORKSPACE/m9base/PhotonCamera"             "$GITHUB_WORKSPACE/modern"             "$GITHUB_WORKSPACE/m9modern" | tee MODERNUI1A_RECONSTRUCT.txt
+
+      - name: Apply Leica-oriented settings cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -u apk/mono1a/monosettings1a/apply.py "$ROOT" | tee MODERNUI1A_SETTINGS1A_APPLY.txt
+          python3 -u apk/mono1a/monosettings1a/test.py "$ROOT" | tee MODERNUI1A_SETTINGS1A_TEST.txt
+          python3 -u apk/mono1a/monosettings1b/apply.py "$ROOT" | tee MODERNUI1A_SETTINGS1B_APPLY.txt
+          python3 -u apk/mono1a/monosettings1b/test.py "$ROOT" | tee MODERNUI1A_SETTINGS1B_TEST.txt
+
+      - name: Set modern UI candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('modern/app/build.gradle')
+          s=p.read_text()
+          s,n=re.subn(r'versionCode\s+\d+', 'versionCode 26691', s, count=1)
+          assert n==1,n
+          s,n=re.subn(r"versionName\s+'[^']+'", "versionName '0.07-monochrome-modernui1a-leicasettings'", s, count=1)
+          assert n==1,n
+          p.write_text(s)
+          PY
+
+      - name: Verify modern UI and frozen photographic seam
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 - <<'PY' | tee MODERNUI1A_POLICY_PROOF.txt
+          from pathlib import Path
+          import hashlib,json,re
+          root=Path('modern')
+          frozen=json.loads(Path('apk/mono1a/upstream1b/frozen_monochrome.json').read_text())
+          for rel,want in frozen.items():
+              got=hashlib.sha256((root/rel).read_bytes()).hexdigest()
+              assert got==want,(rel,got,want)
+          layout=(root/'app/src/main/res/layout/layout_main_topbar.xml').read_text()
+          m=re.search(r'(<ImageButton\s+android:id="@\+id/settings_button"[\s\S]*?/>)',layout)
+          assert m
+          block=m.group(1)
+          assert 'android:visibility="visible"' in block
+          assert 'app:layout_constraintStart_toEndOf="@id/flash_button"' in block
+          prefs=(root/'app/src/main/res/xml/preferences.xml').read_text()
+          assert 'pref_category_video_shortcut_key' not in prefs
+          assert 'pref_saturation_seekbar_key' not in prefs
+          assert 'pref_binning_key' not in prefs
+          assert 'pref_category_advanced_key' in prefs
+          source=(root/'MONOUPSTREAM1B_RECONSTRUCTION.json')
+          assert source.is_file()
+          rec=json.loads(source.read_text())
+          assert rec['modernPhotonUi'] and not rec['photographicSeamChanged']
+          print(json.dumps({
+            'revision':'MONOMODERNUI1A_LEICA_SETTINGS_FOUNDATION',
+            'photonCommit':rec['photonCommit'],
+            'modernUi':True,
+            'videoSettingsVisible':False,
+            'binningCodePreservedButHidden':True,
+            'quadBayerCodePreservedButHidden':True,
+            'settingsGearRightOfFlash':True,
+            'frozenMonochromFilesVerified':len(frozen)
+          },indent=2))
+          PY
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Run modern Monochrom regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest             --tests '*ZoomControllerTest'             --tests '*MonoUpstream1A*'             --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MODERNUI1A_TESTS.log"
+
+      - name: Build modern UI Monochrom APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MODERNUI1A_GRADLE.log"
+
+      - name: Package validation APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MODERNUI1A_APK_PROOF.txt
+          from pathlib import Path
+          import hashlib,shutil,zipfile
+          root=Path('modern')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'))
+          assert len(apks)==1,apks
+          out=Path('MMonochrome_MODERNUI1A_LEICA_SETTINGS_FOUNDATION.apk')
+          shutil.copyfile(apks[0],out)
+          with zipfile.ZipFile(out) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              assert b'MONOSETTINGS1A_LEICA_UI_CLEANUP' in dex
+              assert b'MONOTAPMETER1A' in dex
+              assert b'MONOUPSTREAM1A_RAW16' in dex
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MODERNUI1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS',out.name,digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MODERNUI1A-LEICA-SETTINGS-EVIDENCE
+          path: |
+            MODERNUI1A_*.log
+            MODERNUI1A_*.txt
+          if-no-files-found: warn
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MODERNUI1A-LEICA-SETTINGS
+          path: |
+            MMonochrome_MODERNUI1A_LEICA_SETTINGS_FOUNDATION.apk
+            MODERNUI1A_APK_SHA256.txt
+            MODERNUI1A_APK_PROOF.txt
+            MODERNUI1A_POLICY_PROOF.txt
+          if-no-files-found: error
