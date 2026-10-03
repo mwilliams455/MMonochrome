@@ -292,15 +292,15 @@ capture.write_text(s)
 
 # ----- Tap while AE-L is held = focus/recompose only, never a new exposure subject -----
 s=focus.read_text()
-anchor='''        if(x<0||y<0||x>=textureView.getWidth()||y>=textureView.getHeight())return true;
+anchor='''        if(com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.insideSelection(x,y,now)) {
 '''
-replacement=anchor+'''        if(captureController.isMonoAeLock1F()) {
+replacement='''        if(captureController.isMonoAeLock1F()) {
             com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.clear("ae_lock_focus_only");
             if(autofocus)processTouchToFocus(x,y);
             textureView.requestRender();
             return true;
         }
-'''
+'''+anchor
 s=one(s,anchor,replacement,"tap focus-only under AE lock")
 focus.write_text(s)
 
