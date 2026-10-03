@@ -157,6 +157,14 @@ def u32_window(bf,runtime_addr,count=32,before_words=4):
     vals=struct.unpack_from('<'+('I'*(count+before_words)),bf,off)
     return [{'addr':hex(RAM+off+i*4),'value':hex(v)} for i,v in enumerate(vals)]
 
+def literal_offset_accesses(lines,offset):
+    pat=re.compile(rf'0x{offset:x}\b',re.I)
+    out=[]
+    for i,l in enumerate(lines):
+        if pat.search(l):
+            out.append({'site':hex(ao(l)),'line':l,'context':lines[max(0,i-60):min(len(lines),i+100)]})
+    return out
+
 def offset_accesses(lines,offsets):
     out={}
     for off in offsets:
@@ -251,8 +259,20 @@ def main():
         'address':'0xaba8c',
         'body':address_window(lines,0xaba8c,0xabb80),
         'direct_xrefs':direct_xrefs(lines,0xaba8c),
+        'state_formula':'strength==0 ? 0 : strength + 2*hue',
+        'state_map':{
+          'Off':0,'Sepia Weak':1,'Sepia Strong':2,
+          'Cool Weak':3,'Cool Strong':4,
+          'Selenium Weak':5,'Selenium Strong':6
+        },
         'table_root_runtime':'0xdb7ac',
+        'table_root_refs':{
+          'literal_hits':literal_hits(bf,0xdb7ac),
+          'split_refs':split_refs(lines,0xdb7ac),
+        },
         'table_u32_window':u32_window(bf,0xdb7ac,48,8),
+        'parameter_offset_d42c_accesses':literal_offset_accesses(lines,0xd42c),
+        'parameter_offset_d430_accesses':literal_offset_accesses(lines,0xd430),
       },
       'jpeg_debug_windows':{
         'LoadJPEG':address_window(lines,0x638b0,0x63b40),
@@ -281,7 +301,11 @@ def main():
         f.write('\n===== JOB BUILDER BROAD WINDOW =====\n'+'\n'.join(report['job_builder_window'])+'\n')
         f.write('\n===== JOB BUILDER CALL TARGETS =====\n'+json.dumps(report['job_builder_call_targets'],indent=2)+'\n')
         f.write('\n===== STRENGTH RESOLVER 0xABA8C =====\n'+'\n'.join(report['strength_resolver']['body'])+'\n')
+        f.write('\n===== STRENGTH STATE MAP =====\n'+json.dumps(report['strength_resolver']['state_map'],indent=2)+'\n')
+        f.write('\n===== STRENGTH TABLE ROOT REFS =====\n'+json.dumps(report['strength_resolver']['table_root_refs'],indent=2)+'\n')
         f.write('\n===== STRENGTH TABLE ROOT 0xDB7AC =====\n'+json.dumps(report['strength_resolver']['table_u32_window'],indent=2)+'\n')
+        f.write('\n===== PARAM OFFSET D42C ACCESSES =====\n'+json.dumps(report['strength_resolver']['parameter_offset_d42c_accesses'],indent=2)+'\n')
+        f.write('\n===== PARAM OFFSET D430 ACCESSES =====\n'+json.dumps(report['strength_resolver']['parameter_offset_d430_accesses'],indent=2)+'\n')
         f.write('\n===== JOB TONING FIELD ACCESSES =====\n'+json.dumps(report['job_toning_field_accesses'],indent=2)+'\n')
         f.write('\n===== JPEG DEBUG WINDOWS =====\n'+json.dumps(report['jpeg_debug_windows'],indent=2)+'\n')
         f.write('\n===== PROFILE FIELD CONSUMERS =====\n'+json.dumps(report['profile_field_consumers'],indent=2)+'\n')
