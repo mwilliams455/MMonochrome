@@ -68,7 +68,8 @@ s=one(s,admission,admission+'''        if(monoBracketActive1H) {
 
 field='''    private String monoBracketCamera1H="";
 '''
-s=one(s,field,field+'''    private int monoBracketAdmissionRetries1H;
+s=one(s,field,field+'''    private static final String MONO_BRACKET_ADMISSION_REVISION_1H="LEICABRACKET1B_ADMISSIONFIX1";
+    private int monoBracketAdmissionRetries1H;
     private static final int MONO_BRACKET_ADMISSION_RETRY_MS_1H=250;
     private static final int MONO_BRACKET_ADMISSION_MAX_RETRIES_1H=80;
 ''',"bracket admission fields")
