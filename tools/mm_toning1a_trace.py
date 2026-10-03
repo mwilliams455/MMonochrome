@@ -165,6 +165,10 @@ def main():
         'hue':function_window(lines,hcb),
         'strength':function_window(lines,scb),
       },
+      'getters':{
+        'hue':function_window(lines,hstate),
+        'strength':function_window(lines,sstate),
+      },
       'refs':refs,
       'manual_semantics':{
         'hue':['Sepia','Blue/Cool','Selenium'],
@@ -181,7 +185,9 @@ def main():
     with (a.outdir/'MM_TONING1A_TRACE.txt').open('w') as f:
         f.write(json.dumps({k:v for k,v in report.items() if k not in ('callbacks','refs')},indent=2)+'\n')
         for name,body in report['callbacks'].items():
-            f.write(f'\n===== {name.upper()} =====\n'+'\n'.join(body)+'\n')
+            f.write(f'\n===== {name.upper()} SETTER =====\n'+'\n'.join(body)+'\n')
+        for name,body in report['getters'].items():
+            f.write(f'\n===== {name.upper()} GETTER =====\n'+'\n'.join(body)+'\n')
         f.write('\n===== REFERENCES =====\n'+json.dumps(refs,indent=2)+'\n')
     print(json.dumps({
         'hue':[(x['string'],x['value']) for x in hue],
