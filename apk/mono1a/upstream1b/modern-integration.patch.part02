@@ -1,0 +1,600 @@
+                 img.recycle();
++                timing.recycleNs = System.nanoTime() - stageStartedNs;
++
++                stageStartedNs = System.nanoTime();
+                 ExifInterface inter = ParseExif.setAllAttributes(fileToSave.toFile(), exifData);
++                timing.exifSetupNs = System.nanoTime() - stageStartedNs;
++                stageStartedNs = System.nanoTime();
+                 inter.saveAttributes();
++                timing.exifSaveNs = System.nanoTime() - stageStartedNs;
++                return true;
++            } catch (IOException e) {
++                e.printStackTrace();
++                return false;
++            } finally {
++                timing.totalNs = System.nanoTime() - totalStartedNs;
++            }
++        }
++
++        // PERF3F EXIFASYNC1A M9-only payload writer. It is byte/pixel/quality-identical to
++        // the synchronous helper above through bitmap recycle, but deliberately stops before
++        // ParseExif.setAllAttributes()/saveAttributes(). M9JpegFinalizeQueue owns that exact
++        // metadata step and Photon publication afterward.
++        public static boolean saveBitmapAsJPGPayloadM9(Path fileToSave, Bitmap img, int jpgQuality, ParseExif.ExifData exifData) {
++            // METADATAFIX1A_PRIMARY_JPEG_COMPRESSION_TAG_OMITTED
++            exifData.COMPRESSION = null;
++            M9JpegSaveTiming timing = new M9JpegSaveTiming();
++            M9_JPEG_SAVE_TIMING.set(timing);
++            long totalStartedNs = System.nanoTime();
++            try {
++                long stageStartedNs = System.nanoTime();
++                OutputStream rawOutputStream = Files.newOutputStream(fileToSave);
++                timing.fileOpenNs = System.nanoTime() - stageStartedNs;
++                OutputStream timedRawOutputStream = new M9TimingOutputStream(rawOutputStream, timing);
++                OutputStream outputStream = new java.io.BufferedOutputStream(timedRawOutputStream, 64 * 1024);
++
++                stageStartedNs = System.nanoTime();
++                img.compress(Bitmap.CompressFormat.JPEG, jpgQuality, outputStream);
++                timing.compressNs = System.nanoTime() - stageStartedNs;
++                outputStream.flush();
++                outputStream.close();
++
++                stageStartedNs = System.nanoTime();
++                img.recycle();
++                timing.recycleNs = System.nanoTime() - stageStartedNs;
+                 return true;
+             } catch (IOException e) {
+                 e.printStackTrace();
+                 return false;
++            } finally {
++                timing.totalNs = System.nanoTime() - totalStartedNs;
+             }
+         }
+ 
+@@ -190,6 +320,7 @@ public class ImageSaver {
+                                             CameraCharacteristics characteristics,
+                                             CaptureResult captureResult,
+                                             int cameraRotation) {
++            if (com.particlesdevs.photoncamera.m9.M9Config.usesM9Pipeline()) image.requireM9Raw16();
+             Parameters parameters = new Parameters();
+ 
+             parameters.FillConstParameters(characteristics, new Point(image.width, image.height));
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java b/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java
+index 7cedcb6d..53f6ef33 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/processing/SaverImplementation.java
+@@ -1,5 +1,6 @@
+ package com.particlesdevs.photoncamera.processing;
+ 
++import android.graphics.ImageFormat;
+ import android.hardware.camera2.CameraCharacteristics;
+ import android.hardware.camera2.CaptureRequest;
+ import android.hardware.camera2.CaptureResult;
+@@ -42,6 +43,11 @@ public class SaverImplementation {
+         if(image.getFormat() == 0x25){
+             width = image.getWidth();
+             height = image.getHeight();
++        } else if (image.getFormat() == ImageFormat.RAW_SENSOR) {
++            // MONO_DEVICEPORT3A_RAWSTRIDE_PACK1A: RAW_SENSOR width is logical image
++            // width. rowStride is transport layout and may include row padding.
++            width = image.getWidth();
++            height = image.getHeight();
+         } else {
+             width = rowStride / pixelStride;
+             height = image.getHeight();
+@@ -51,7 +57,8 @@ public class SaverImplementation {
+         // preview already reflects. This crops both the stored JPEG and RAW/DNG
+         // because both derive from this single ImageFrame.
+         CaptureController captureController = PhotonCamera.getCaptureController();
+-        if (captureController != null && captureController.zoomController.isZoomed()) {
++        if (!com.particlesdevs.photoncamera.m9.M9Config.usesM9Pipeline()
++                && captureController != null && captureController.zoomController.isZoomed()) {
+             int logicalW = image.getWidth();
+             int logicalH = image.getHeight();
+             ZoomController.CropRegion cropRegion =
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/FrameNumberSelector.java b/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/FrameNumberSelector.java
+index 83bf3170..9c743066 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/FrameNumberSelector.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/FrameNumberSelector.java
+@@ -2,12 +2,24 @@ package com.particlesdevs.photoncamera.processing.parameters;
+ 
+ import com.particlesdevs.photoncamera.api.CameraMode;
+ import com.particlesdevs.photoncamera.app.PhotonCamera;
++import com.particlesdevs.photoncamera.m9.M9Config;
+ 
+ 
+ public class FrameNumberSelector {
+     public static int frameCount;
+     public static int throwCount;
+     public static int getFrames() {
++        // M9_NOHDR1A_SINGLE_FRAME_BOUNDARY
++        CameraMode mode = PhotonCamera.getSettings().selectedMode;
++        if (M9Config.usesM9Pipeline()
++                && mode != CameraMode.UNLIMITED
++                && mode != CameraMode.RAWVIDEO) {
++            frameCount = 1;
++            throwCount = 0;
++            IsoExpoSelector.HDR = false;
++            return 1;
++        }
++        if (M9Config.isCaptureTest()) { frameCount = 1; throwCount = 0; return 1; }
+         double lightcycle = (Math.exp(1.3595 + 1.0020 * PhotonCamera.getCaptureController().mPreviewIso/IsoExpoSelector.getISOAnalog())) / 9;
+         double target = (Math.exp(1.3595 + 1.0020 * PhotonCamera.getCaptureController().mPreviewIso/IsoExpoSelector.getISOAnalog())) / 14;
+         int frames = PhotonCamera.getSettings().frameCount;
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java b/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java
+index 58a36912..ece22db1 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java
+@@ -1,5 +1,9 @@
+ package com.particlesdevs.photoncamera.processing.parameters;
+ 
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposurePlan1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureStore1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureDiagnostics1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoPlacementAssist1D;
+ import android.content.Context;
+ import android.graphics.Rect;
+ import android.hardware.camera2.CameraCharacteristics;
+@@ -12,6 +16,13 @@ import android.util.SizeF;
+ 
+ import com.particlesdevs.photoncamera.api.CameraMode;
+ import com.particlesdevs.photoncamera.app.PhotonCamera;
++import com.particlesdevs.photoncamera.m9.M9Config;
++import com.particlesdevs.photoncamera.m9.M9ExposureDiagnostics;
++import com.particlesdevs.photoncamera.m9.M9ExposureAudit;
++import com.particlesdevs.photoncamera.m9.M9SceneExposureDiagnostic;
++import com.particlesdevs.photoncamera.m9.M9ModernExposurePolicy;
++import com.particlesdevs.photoncamera.m9.M9BacklightDiagnostic;
++import com.particlesdevs.photoncamera.m9.M9M10rMfmTest1A;
+ import com.particlesdevs.photoncamera.capture.CaptureController;
+ import com.particlesdevs.photoncamera.settings.PreferenceKeys;
+ import com.particlesdevs.photoncamera.api.VendorTagUtils;
+@@ -19,6 +30,7 @@ import com.particlesdevs.photoncamera.settings.SensorConfigPreferenceGenerator;
+ 
+ import java.util.ArrayList;
+ import java.util.Locale;
++import org.json.JSONObject;
+ 
+ public class IsoExpoSelector {
+     public static final int baseFrame = 1;
+@@ -64,6 +76,9 @@ public class IsoExpoSelector {
+                 " iso:" + captureController.mPreviewIso+ " analog:"+getISOAnalog());
+         if(step == 0) fullpairs.clear();
+         ExpoPair pair = GenerateExpoPair(step,captureController);
++        if (M9Config.isCaptureTest() && step == 0) {
++            M9ExposureAudit.recordCaptureRequestStep0(step, getISOLOW(), pair.iso, pair.exposure);
++        }
+         fullpairs.add(pair);
+         Log.v(TAG, "IsoSelected:" + pair.iso +
+                 " ExpoSelected:" + ExposureIndex.sec2string(ExposureIndex.time2sec(pair.exposure)) + " sec step:" + step + " HDR:" + HDR + " total exposure:" + ExposureIndex.time2sec(pair.exposure)*pair.iso);
+@@ -74,12 +89,127 @@ public class IsoExpoSelector {
+         lastSelectedExposure = pair.exposure;
+     }
+     public static ExpoPair GenerateExpoPair(int step, CaptureController captureController) {
+-        ExpoPair pair = new ExpoPair(captureController.mPreviewExposureTime, getEXPLOW(), getEXPHIGH(),
+-                captureController.mPreviewIso, getISOLOW(), getISOHIGH(),getISOAnalog());
+-        double compensation = Math.pow(2.0,PhotonCamera.getSettings().exposureCompensation);
++        return generateMonoAware1A(step,captureController,null);
++    }
++    public static ExpoPair monoHudPair1A(CaptureController controller) {
++        MonoExposurePlan1A p=controller.getMonoExposurePlan1A();
++        return p==null?GenerateExpoPair(-1,controller):monoPair1A(p);
++    }
++    private static ExpoPair monoPair1A(MonoExposurePlan1A p) {
++        ExpoPair pair=new ExpoPair(p.exposureNs,1,Long.MAX_VALUE,p.iso,1,Integer.MAX_VALUE,Integer.MAX_VALUE);
++        pair.curlayer=ExpoPair.exposureLayer.Normal;pair.layerMpy=1;
++        pair.isIsoLimited=(p.flags&1)!=0;pair.isShutterLimited=(p.flags&2)!=0;
++        pair.isIsoManualOverLimit=(p.flags&4)!=0;pair.isShutterManualOverLimit=(p.flags&8)!=0;
++        pair.isShutterTripodBypassed=(p.flags&16)!=0;
++        return pair;
++    }
++    public static void setMonoPlannedExpo1A(CaptureRequest.Builder builder,int step,
++            CaptureController controller,MonoExposurePlan1A plan) {
++        if(plan==null) {setExpo(builder,step,controller);return;}
++        ExpoPair pair=monoPair1A(plan);
++        if(step==0) {fullpairs.clear();pairs.clear();}
++        fullpairs.add(pair);if(pairs.size()<patternSize)pairs.add(pair);
++        builder.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_OFF);
++        builder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,0);
++        builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME,plan.exposureNs);
++        builder.set(CaptureRequest.SENSOR_SENSITIVITY,plan.iso);
++        builder.setTag(plan);
++        lastSelectedExposure=plan.exposureNs;
++    }
++    private static final class MonoInput1A {
++        final int iso,isoLow,isoHigh,analog;
++        final long exposureNs,timeLow,timeHigh;
++        final MonoExposurePlan1A.Controls controls;
++        final double autoEv,dynamicFactor;
++        MonoInput1A(int iso,long time,CameraCharacteristics chars,CaptureResult observation,
++                MonoExposurePlan1A.Controls controls,double autoEv) {
++            Range<Integer> sensitivity=chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
++            Range<Long> exposure=chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
++            Integer a=chars.get(CameraCharacteristics.SENSOR_MAX_ANALOG_SENSITIVITY);
++            if(sensitivity==null || exposure==null)throw new IllegalArgumentException("missing_physical_exposure_ranges");
++            this.iso=iso;exposureNs=time;this.controls=controls;this.autoEv=autoEv;
++            isoLow=sensitivity.getLower();isoHigh=sensitivity.getUpper();timeLow=exposure.getLower();timeHigh=exposure.getUpper();
++            analog=a==null?isoHigh:a;
++            if(isoLow<=0 || isoHigh<isoLow || timeLow<=0 || timeHigh<timeLow)throw new IllegalArgumentException("invalid_physical_exposure_ranges");
++            dynamicFactor=getDynamicScalingFactor(controls.tripod,chars,observation);
++        }
++    }
++    public static MonoExposurePlan1A planMonoExposure1A(CaptureController controller,CaptureResult transport,
++            String cameraKey,long token,MonoExposurePlan1A.Controls controls) {
++        if(transport==null)return null;
++        Long ts=transport.get(CaptureResult.SENSOR_TIMESTAMP);
++        com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.PlanObservation1A entry=
++                com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.planObservation1A(cameraKey,ts==null?-1:ts);
++        if(entry==null)return null;
++        CaptureResult observation=entry.result;
++        Integer iso=observation.get(CaptureResult.SENSOR_SENSITIVITY);
++        Long exposure=observation.get(CaptureResult.SENSOR_EXPOSURE_TIME);
++        Integer ae=observation.get(CaptureResult.CONTROL_AE_MODE);
++        Integer aeComp=observation.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION);
++        if(iso==null || iso<=0 || exposure==null || exposure<=0 || ae==null || ae==0 || (aeComp!=null && aeComp!=0))return null;
++        CameraCharacteristics chars=controller.monoCharacteristics1A();if(chars==null)return null;
++        boolean eligible=MonoExposurePlan1A.assistEligible(controls);
++        int rotation=PhotonCamera.getGravity()!=null?PhotonCamera.getGravity().getCameraRotation(controller.mSensorOrientation):controller.cameraRotation;
++        final long tapNow1A=android.os.SystemClock.elapsedRealtimeNanos();
++        com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.Selection tap1A=
++                com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.selection(tapNow1A);
++        if(tap1A!=null && (!cameraKey.equals(tap1A.geometry.camera)||!controls.mode.equals(tap1A.geometry.mode))) {
++            com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.clear("plan_context_change");tap1A=null;
++        }
++        MonoPlacementAssist1D.Decision placement1D;
++        if(tap1A!=null) {
++            placement1D=MonoPlacementAssist1D.evaluateTap(eligible,
++                    com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.placementObservation1D(cameraKey),
++                    com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.tapObservation1A(cameraKey),tap1A);
++        } else {
++            M9BacklightDiagnostic.LiveFeedbackDecision feedback=M9M10rMfmTest1A.evaluateForMonoPlan1A(
++                    MonoExposurePlan1A.energy(iso,exposure)/1e9,rotation,eligible,
++                    eligible?"eligible_mono_shared_auto_plan":"mono_manual_ev_or_tripod_bypass");
++            placement1D=MonoPlacementAssist1D.evaluate(
++                    eligible,feedback,M9M10rMfmTest1A.monoPlanSnapshot1D(),
++                    com.particlesdevs.photoncamera.m9.preview.MonoGpuPreview2A.placementObservation1D(cameraKey));
++        }
++        MonoInput1A input=new MonoInput1A(iso,exposure,chars,observation,controls,placement1D.appliedEv);
++        ExpoPair pair=generateMonoAware1A(-1,controller,input);
++        // The manual values are physical sensor controls. Do not round through ISO-100 twice.
++        if(controls.manualIso>0)pair.iso=Math.max(input.isoLow,Math.min(input.isoHigh,controls.manualIso));
++        if(controls.manualExposureNs>0)pair.exposure=Math.max(input.timeLow,Math.min(input.timeHigh,controls.manualExposureNs));
++        int flags=(pair.isIsoLimited?1:0)|(pair.isShutterLimited?2:0)|(pair.isIsoManualOverLimit?4:0)
++                |(pair.isShutterManualOverLimit?8:0)|(pair.isShutterTripodBypassed?16:0);
++        if(tap1A!=null && placement1D.appliedEv>0.0 && (flags&3)!=0)
++            com.particlesdevs.photoncamera.m9.preview.MonoTapMeter1A.status(tap1A.id,
++                    String.format(java.util.Locale.ROOT,"TAP %+.2f · LIMITED",placement1D.appliedEv));
++        Long physicalTs=observation.get(CaptureResult.SENSOR_TIMESTAMP);
++        Integer boost=observation.get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST);
++        long now=android.os.SystemClock.elapsedRealtimeNanos();
++        return new MonoExposurePlan1A(now,token,entry.receivedNs,physicalTs==null?-1:physicalTs,cameraKey,controls,
++                iso,exposure,pair.iso,pair.exposure,boost==null||boost<=0?100:boost,
++                placement1D.appliedEv,placement1D.reason,placement1D.diagnosticJson(),flags);
++    }
++
++    private static ExpoPair generateMonoAware1A(int step,CaptureController captureController,MonoInput1A input) {
++        final boolean planning=input!=null;
++        boolean useTripod=planning?input.controls.tripod:IsoExpoSelector.useTripod;
++        double mpy1;
++        final boolean HDR=!planning && !M9Config.usesM9Pipeline() && IsoExpoSelector.HDR;
++        // M9_NOHDR1A_EXPOSURE_ALLOCATOR
++        // Bracketing preference may remain nonzero in UI, but cannot perturb M9 exposure.
++        if (!planning && M9Config.usesM9Pipeline()) IsoExpoSelector.HDR = false;
++        ExpoPair pair = planning ? new ExpoPair(input.exposureNs,input.timeLow,input.timeHigh,input.iso,input.isoLow,input.isoHigh,input.analog)
++                : new ExpoPair(captureController.mPreviewExposureTime,getEXPLOW(),getEXPHIGH(),captureController.mPreviewIso,getISOLOW(),getISOHIGH(),getISOAnalog());
++        double compensation = Math.pow(2.0,planning?input.controls.userEv+input.autoEv:PhotonCamera.getSettings().exposureCompensation);
+         pair.normalizeiso100();
+         pair.ExpoCompensateLower(1.0/compensation);
+-        double mpy1;
++        if (!planning && M9Config.isCaptureTest() && step == 0) {
++            M9ExposureAudit.beginStep0(step, getISOLOW(), captureController.mPreviewIso,
++                    captureController.mPreviewExposureTime, pair.iso, pair.exposure);
++        }
++        if (!planning && M9Config.isCaptureTest()) {
++            M9ExposureDiagnostics.begin(captureController.mPreviewIso, captureController.mPreviewExposureTime,
++                    getISOLOW(), getISOHIGH(), getISOAnalog(), getEXPLOW(), getEXPHIGH(), compensation,
++                    PhotonCamera.getSettings().selectedMode.name(), useTripod);
++            M9ExposureDiagnostics.recordNormalizedTarget(pair.iso, pair.exposure);
++        }
+         if (PhotonCamera.getSettings().selectedMode == CameraMode.NIGHT)
+         {
+             mpy1 = 7000.0;
+@@ -109,8 +239,9 @@ public class IsoExpoSelector {
+         }
+ 
+         // Dynamically update tripod state from gyro to avoid stale exposure caching across modes
+-        if (PhotonCamera.getGyro() != null) {
++        if (!planning && PhotonCamera.getGyro() != null) {
+             useTripod = PhotonCamera.getGyro().getTripod();
++            IsoExpoSelector.useTripod=useTripod;
+         }
+ 
+         // Shutter-Priority / Dynamic Low-Light AE Curve - PHOTO and NIGHT only.
+@@ -132,7 +263,9 @@ public class IsoExpoSelector {
+             capEnd = PHOTO_HANDHELD_CAP_END;
+         }
+ 
+-        double dynamicFactor = getDynamicScalingFactor();
++        long m9NominalCapStart = capStart;
++        long m9NominalCapEnd = capEnd;
++        double dynamicFactor = planning?input.dynamicFactor:getDynamicScalingFactor();
+         // Stability may shorten Night exposures, but it must never extend the
+         // advertised handheld ceiling. Previously the generic 2.5x upper bound
+         // could turn NIGHT_HANDHELD_CAP_END (1/3s) into ~0.83s.
+@@ -141,6 +274,8 @@ public class IsoExpoSelector {
+         }
+         capStart = (long) (capStart * dynamicFactor);
+         capEnd = (long) (capEnd * dynamicFactor);
++        long m9ScaledCapStart = capStart;
++        long m9ScaledCapEnd = capEnd;
+ 
+         if (PhotonCamera.getSettings().selectedMode == CameraMode.PHOTO && !useTripod) {
+             capEnd = Math.min(capEnd, ExposureIndex.sec / 15);
+@@ -151,7 +286,99 @@ public class IsoExpoSelector {
+             capStart = Math.min(capStart, capEnd);
+         }
+ 
++        long m9PhotonCapStart = capStart;
++        long m9PhotonCapEnd = capEnd;
++        if (!planning && M9Config.isCaptureTest()) {
++            ExpoPair m9PhotonReference = new ExpoPair(pair);
++            m9PhotonReference.applyShutterPriorityCurve(m9PhotonCapStart, m9PhotonCapEnd, CAP_RAMP_STOPS);
++            M9ExposureDiagnostics.recordPhotonCurrentReference(m9PhotonReference.iso, m9PhotonReference.exposure, m9PhotonCapStart, m9PhotonCapEnd);
++            if (step == 0) {
++                M9ExposureAudit.recordPhotonReferenceStep0(step, getISOLOW(),
++                        m9PhotonReference.iso, m9PhotonReference.exposure,
++                        m9PhotonCapStart, m9PhotonCapEnd);
++            }
++        }
++        if (!planning && M9Config.isM9Modern()) {
++            double m9PreviewEnergyIsoSeconds = ((double) captureController.mPreviewIso
++                    * (double) captureController.mPreviewExposureTime) / 1.0e9;
++            long m9PreFeedbackExposureNs = pair.exposure;
++            int m9PreFeedbackIsoNormalized = pair.iso;
++            // GenerateExpoPair(-1, ...) is a preflight frametime probe in CaptureController,
++            // not a capture request. Never let FB1 alter that probe. For actual step>=0
++            // allocations derive orientation directly from Gravity because cameraRotation is
++            // assigned by CaptureController only after its preflight GenerateExpoPair call.
++            int m9FeedbackRotationDegrees = PhotonCamera.getGravity() != null
++                    ? PhotonCamera.getGravity().getCameraRotation(captureController.mSensorOrientation)
++                    : captureController.cameraRotation;
++            boolean m9FeedbackEligible = step >= 0
++                    && PhotonCamera.getSettings().selectedMode == CameraMode.PHOTO
++                    && !useTripod
++                    && Math.abs(PhotonCamera.getSettings().exposureCompensation) < 1.0e-9
++                    && captureController.getParamController().getCurrentExposureValue() == 0
++                    && captureController.getParamController().getCurrentISOValue() == 0;
++            String m9FeedbackEligibilityReason;
++            if (step < 0) {
++                m9FeedbackEligibilityReason = "feedback_bypassed_preflight_probe";
++            } else if (m9FeedbackEligible) {
++                m9FeedbackEligibilityReason = "eligible_auto_photo";
++            } else {
++                m9FeedbackEligibilityReason = "feedback_bypassed_nonzero_ev_manual_or_tripod";
++            }
++            M9BacklightDiagnostic.LiveFeedbackDecision m9Feedback =
++                    M9M10rMfmTest1A.evaluateLiveFeedback(
++                            m9PreviewEnergyIsoSeconds,
++                            m9FeedbackRotationDegrees,
++                            m9FeedbackEligible,
++                            m9FeedbackEligibilityReason);
++            if (Math.abs(m9Feedback.appliedEv) > 1.0e-9) {
++                double m9FeedbackFactor = Math.pow(2.0, m9Feedback.appliedEv);
++                pair.ExpoCompensateLower(1.0 / m9FeedbackFactor);
++            }
++            M9BacklightDiagnostic.recordLiveFeedbackApplication(
++                    m9Feedback,
++                    m9PreviewEnergyIsoSeconds,
++                    m9FeedbackRotationDegrees,
++                    m9PreFeedbackExposureNs,
++                    m9PreFeedbackIsoNormalized,
++                    pair.exposure,
++                    pair.iso);
++            if (!planning && M9Config.isCaptureTest() && step == 0) {
++                ExpoPair m9AuditFeedbackOnly = new ExpoPair(pair);
++                m9AuditFeedbackOnly.applyShutterPriorityCurve(
++                        m9PhotonCapStart, m9PhotonCapEnd, CAP_RAMP_STOPS);
++                M9ExposureAudit.recordFeedbackStep0(step, getISOLOW(),
++                        m9FeedbackEligible, m9Feedback.wouldApply,
++                        m9Feedback.recommendedEv, m9Feedback.appliedEv, m9Feedback.reason,
++                        pair.iso, pair.exposure,
++                        m9AuditFeedbackOnly.iso, m9AuditFeedbackOnly.exposure);
++            }
++            if (!planning && M9Config.isCaptureTest() && step == 0) {
++                M9SceneExposureDiagnostic.evaluateStep0(
++                        step, m9PreviewEnergyIsoSeconds, m9FeedbackRotationDegrees);
++            }
++        }
++        if (M9Config.isM9Modern()
++                && PhotonCamera.getSettings().selectedMode == CameraMode.PHOTO
++                && !useTripod) {
++            M9ModernExposurePolicy.Decision m9Decision = M9ModernExposurePolicy.adjustCaps(
++                    pair.exposure, pair.iso, pair.isoanalog, capStart, capEnd, !planning);
++            capStart = m9Decision.capStartNs; capEnd = m9Decision.capEndNs;
++            if (!planning && M9Config.isCaptureTest() && step == 0) {
++                JSONObject m9AuditMotion = M9ModernExposurePolicy.snapshotJson();
++                M9ExposureAudit.recordMotionCapsStep0(step, m9Decision.applied,
++                        m9AuditMotion.optString("reason", "unknown"),
++                        m9AuditMotion.optDouble("captureMotionScore", 0.0),
++                        m9PhotonCapStart, m9PhotonCapEnd,
++                        m9Decision.capStartNs, m9Decision.capEndNs);
++            }
++        }
++        if (!planning && M9Config.isCaptureTest()) {
++            int m9Gyro = PhotonCamera.getGyro() != null ? PhotonCamera.getGyro().getFilteredShakiness() : -1;
++            M9ExposureDiagnostics.recordCaps(m9NominalCapStart, m9NominalCapEnd, dynamicFactor, m9Gyro, m9ScaledCapStart, m9ScaledCapEnd, m9PhotonCapStart, m9PhotonCapEnd);
++            M9ExposureDiagnostics.recordCurveInput(pair.exposure, pair.iso, capStart, capEnd, CAP_RAMP_STOPS);
++        }
+         pair.applyShutterPriorityCurve(capStart, capEnd, CAP_RAMP_STOPS);
++        if (!planning && M9Config.isCaptureTest()) M9ExposureDiagnostics.recordCurveOutput(pair.iso, pair.exposure);
+ 
+         if (pair.normalizedIso() >= 12700.0/mpy1) {
+             pair.ReduceIso();
+@@ -162,9 +389,9 @@ public class IsoExpoSelector {
+ 
+         // Apply dynamic exposure balance shifting and hard limits (shutter/ISO priority)
+         if (captureController != null) {
+-            float mult = captureController.exposureBalanceMultiplier;
+-            int isoLimit = captureController.exposureBalanceIsoLimit;
+-            float shutterLimit = captureController.exposureBalanceShutterLimit;
++            float mult = planning?input.controls.balance:captureController.exposureBalanceMultiplier;
++            int isoLimit = planning?input.controls.isoLimit:captureController.exposureBalanceIsoLimit;
++            float shutterLimit = planning?input.controls.shutterLimit:captureController.exposureBalanceShutterLimit;
+             CameraMode mode = PhotonCamera.getSettings().selectedMode;
+             
+             boolean hasMultiplier = (mult != 1.0f);
+@@ -172,13 +399,13 @@ public class IsoExpoSelector {
+             boolean hasShutterLimit = (shutterLimit > 0.0f || shutterLimit == -2.0f);
+ 
+             if ((hasMultiplier || hasIsoLimit || hasShutterLimit) && (mode == CameraMode.PHOTO || mode == CameraMode.NIGHT)) {
+-                pair.applyExposureBalance(mult, isoLimit, shutterLimit);
++                pair.applyExposureBalance(mult, isoLimit, shutterLimit, useTripod);
+             }
+         }
+ 
+-        double currentManExp = 0.0;
+-        double currentManISO = 0.0;
+-        if (captureController != null && captureController.getParamController() != null) {
++        double currentManExp = planning?input.controls.manualExposureNs:0.0;
++        double currentManISO = planning?input.controls.manualIso:0.0;
++        if (!planning && captureController != null && captureController.getParamController() != null) {
+             currentManExp = captureController.getParamController().getCurrentExposureValue();
+             currentManISO = captureController.getParamController().getCurrentISOValue();
+         }
+@@ -256,14 +483,26 @@ public class IsoExpoSelector {
+             //HDR = true;
+         }
+ 
+-        if(step != -1) {
++        if(!planning && step != -1) {
+             if (step == 0) pairs.clear();
+             if (pairs.size() < patternSize) {
+                 Log.d(TAG, "Added pair:" + pairs.size());
+                 pairs.add(pair);
+             }
+         }
++        if (!planning && M9Config.isCaptureTest()) {
++            M9ExposureDiagnostics.recordFinalNormalized(pair.iso, pair.exposure,
++                    pair.isIsoLimited, pair.isShutterLimited, pair.isIsoManualOverLimit, pair.isShutterManualOverLimit);
++        }
++        if (!planning && M9Config.isCaptureTest() && step == 0) {
++            M9ExposureAudit.recordFinalNormalizedStep0(step, getISOLOW(), pair.iso, pair.exposure);
++        }
+         pair.denormalizeSystem();
++        if(planning) {
++            pair.iso=Math.max(input.isoLow,Math.min(input.isoHigh,pair.iso));
++            pair.exposure=Math.max(input.timeLow,Math.min(input.timeHigh,pair.exposure));
++        }
++        if (!planning && M9Config.isCaptureTest()) M9ExposureDiagnostics.recordFinalSystem(pair.iso, pair.exposure);
+         return pair;
+     }
+ 
+@@ -316,9 +555,11 @@ public class IsoExpoSelector {
+     }
+ 
+     private static double getDynamicScalingFactor() {
++        return getDynamicScalingFactor(IsoExpoSelector.useTripod,CaptureController.mCameraCharacteristics,CaptureController.mPreviewCaptureResult);
++    }
++    private static double getDynamicScalingFactor(boolean useTripod,CameraCharacteristics characteristics,CaptureResult result) {
+         // 1. Focal Length Scaling
+         double focalLength35mm = 24.0;
+-        CameraCharacteristics characteristics = CaptureController.mCameraCharacteristics;
+         if (characteristics != null) {
+             float[] focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+             SizeF sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
+@@ -330,7 +571,6 @@ public class IsoExpoSelector {
+ 
+         // Digital zoom factor
+         float zoom = 1.0f;
+-        CaptureResult result = CaptureController.mPreviewCaptureResult;
+         if (result != null) {
+             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                 Float zoomRatio = result.get(CaptureResult.CONTROL_ZOOM_RATIO);
+@@ -697,6 +937,9 @@ public class IsoExpoSelector {
+          * @param shutterLimitSec the configured shutter duration limit in seconds (-1.0f = Sensor Max, >0 = Custom limit in seconds)
+          */
+         public void applyExposureBalance(double k, int isoLimit, float shutterLimitSec) {
++            applyExposureBalance(k,isoLimit,shutterLimitSec,IsoExpoSelector.useTripod);
++        }
++        private void applyExposureBalance(double k,int isoLimit,float shutterLimitSec,boolean useTripod) {
+             isIsoLimited = false;
+             isShutterLimited = false;
+             isShutterTripodBypassed = false;
+diff --git a/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/CameraFragment.java b/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/CameraFragment.java
+index 59bface1..71a973cd 100644
+--- a/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/CameraFragment.java
++++ b/app/src/main/java/com/particlesdevs/photoncamera/ui/camera/CameraFragment.java
+@@ -19,6 +19,9 @@
+  */
+ 
+ package com.particlesdevs.photoncamera.ui.camera;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposurePlan1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureStore1A;
++import com.particlesdevs.photoncamera.m9.exposure.MonoExposureDiagnostics1A;
+ import android.graphics.Bitmap;
+ import android.annotation.SuppressLint;
+ import android.app.Activity;
+@@ -1021,6 +1024,76 @@ public class CameraFragment extends Fragment {
+ 
+     @SuppressLint("DefaultLocale")
+     private void updateScreenLog(CaptureResult result) {
++        // MONOLIVEGL1A_DISPLAYMONO1A
++        // Photon OES is hardware-AE display imagery. Non-ZSL still capture is
++        // allocated by IsoExpoSelector. Represent that current intended energy
++        // in linear display space without changing the still capture path.
++        if (textureView != null && captureController != null && result != null) {
++            try {
++                if (captureController.isZslMode()) {
++                    textureView.setMonoExposureScale1A(1.0f);
++                    // MONOLIVEGL1E_LIVEPAIRDIAG1C_ZSL
++                    Long actualExposureNs1E = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
++                    Integer actualIso1E = result.get(CaptureResult.SENSOR_SENSITIVITY);
++                    Long sensorTs1E = result.get(CaptureResult.SENSOR_TIMESTAMP);
++                    Integer aeState1E = result.get(CaptureResult.CONTROL_AE_STATE);
++                    Integer awbState1E = result.get(CaptureResult.CONTROL_AWB_STATE);
++                    Integer afState1E = result.get(CaptureResult.CONTROL_AF_STATE);
++                    if (actualExposureNs1E != null && actualExposureNs1E > 0L
++                            && actualIso1E != null && actualIso1E > 0) {
++                        captureController.updateMonoLivePairPreview1E(
++                                actualIso1E, actualExposureNs1E,
++                                actualIso1E, actualExposureNs1E, 1.0,
++                                sensorTs1E != null ? sensorTs1E : -1L,
++                                aeState1E != null ? aeState1E : -1,
++                                awbState1E != null ? awbState1E : -1,
++                                afState1E != null ? afState1E : -1);
++                    }
++                } else {
++                    long nowMono1A = android.os.SystemClock.uptimeMillis();
++                    if (nowMono1A - lastMonoPreviewExposureUpdateMs1A >= 50L) {
++                        lastMonoPreviewExposureUpdateMs1A = nowMono1A;
++                        Long actualExposureNs1A = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
++                        Integer actualIso1A = result.get(CaptureResult.SENSOR_SENSITIVITY);
++                        MonoExposurePlan1A monoPlan1A=captureController.useMonoExposurePlan1A()
++                                ?captureController.updateMonoExposurePlan1A(result):null;
++                        if(captureController.useMonoExposurePlan1A() && monoPlan1A==null) return;
++                        IsoExpoSelector.ExpoPair intended1A = monoPlan1A==null
++                                ?IsoExpoSelector.GenerateExpoPair(-1,captureController)
++                                :new IsoExpoSelector.ExpoPair(monoPlan1A.exposureNs,1L,Long.MAX_VALUE,monoPlan1A.iso,1,Integer.MAX_VALUE,Integer.MAX_VALUE);
++                        if (actualExposureNs1A != null && actualExposureNs1A > 0L
++                                && actualIso1A != null && actualIso1A > 0
++                                && intended1A != null
++                                && intended1A.exposure > 0L && intended1A.iso > 0) {
++                            double actualEnergy1A =
++                                    (double) actualExposureNs1A * (double) actualIso1A;
++                            double intendedEnergy1A =
++                                    (double) intended1A.exposure * (double) intended1A.iso;
++                            double scale1A = intendedEnergy1A / actualEnergy1A;
++                            if (Double.isFinite(scale1A) && scale1A > 0.0) {
++                                if(monoPlan1A!=null)textureView.setMonoExposurePlan1A(new MonoExposureStore1A.Presentation(
++                                        monoPlan1A,captureController.getMonoExposureStore1A()));
++                                else textureView.setMonoExposureScale1A((float) scale1A);
++                                // MONOLIVEGL1E_LIVEPAIRDIAG1A: passive mirror only.
++                                Long sensorTs1E = result.get(CaptureResult.SENSOR_TIMESTAMP);
++                                Integer aeState1E = result.get(CaptureResult.CONTROL_AE_STATE);
++                                Integer awbState1E = result.get(CaptureResult.CONTROL_AWB_STATE);
++                                Integer afState1E = result.get(CaptureResult.CONTROL_AF_STATE);
++                                captureController.updateMonoLivePairPreview1E(
++                                        intended1A.iso, intended1A.exposure,
++                                        actualIso1A, actualExposureNs1A, scale1A,
++                                        sensorTs1E != null ? sensorTs1E : -1L,
++                                        aeState1E != null ? aeState1E : -1,
