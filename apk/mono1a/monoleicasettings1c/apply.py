@@ -49,7 +49,7 @@ before={str(p.relative_to(root)):sha(p) for p in frozen}
 
 # Generated asset identity.
 asset=A.read_bytes()
-if len(asset)!=5*16*2050*2: raise SystemExit("sharpness asset byte count mismatch")
+if len(asset)!=16*2050*2: raise SystemExit("sharpness asset byte count mismatch")
 asset_sha=hashlib.sha256(asset).hexdigest()
 jtxt=J.read_text()
 m=re.search(r'ASSET_SHA256="([0-9a-f]{64})"',jtxt)
@@ -266,7 +266,31 @@ Java_com_particlesdevs_photoncamera_m9_render_M9NativeColorCore_renderMonochrome
     uint64_t changed=0;
     const int B=(selector>0&&modifierCode>0)?MM_MONO_SHARP_BORDER:0;
     if(B>0&&width-2*B>0&&sourceHeight-2*B>0){
-        const int16_t* table=MM_MONO_SHARP_LUT[selector][isoSlot];
+        std::array<int16_t,MM_MONO_SHARP_LUT_COUNT> modifiedTable1C{};
+        auto arithmeticShift1C=[](int x,int s)->int {
+            if(s<=0)return x;
+            const int add=(1<<s)-1;
+            return x>=0?(x>>s):-(((-x)+add)>>s);
+        };
+        auto scaleSharp1C=[&](int16_t x,int code)->int16_t {
+            if(code<=0)return 0;
+            int mul=0,shift=0;
+            switch(code){
+                case 1:mul=1;shift=2;break; case 2:mul=1;shift=1;break;
+                case 3:mul=3;shift=2;break; case 4:mul=1;shift=0;break;
+                case 5:mul=5;shift=2;break; case 6:mul=3;shift=1;break;
+                case 7:mul=7;shift=2;break; case 8:mul=2;shift=0;break;
+                case 9:mul=5;shift=1;break; case 10:mul=3;shift=0;break;
+                case 11:mul=13;shift=2;break; case 12:mul=5;shift=0;break;
+                default:return 0;
+            }
+            int y=arithmeticShift1C(static_cast<int>(x)*mul,shift);
+            if(y<-2048)y=-2048; else if(y>2048)y=2048;
+            return static_cast<int16_t>(y);
+        };
+        for(int i=0;i<MM_MONO_SHARP_LUT_COUNT;++i)
+            modifiedTable1C[static_cast<size_t>(i)]=scaleSharp1C(MM_MONO_SHARP_BASE[isoSlot][i],modifierCode);
+        const int16_t* table=modifiedTable1C.data();
         const int clipMag=-static_cast<int>(table[0]);
         std::vector<uint16_t> scratch(static_cast<size_t>(pixels64));
         for(int y=B-1;y<=sourceHeight-B;++y){const size_t row=static_cast<size_t>(y)*static_cast<size_t>(width);
@@ -443,8 +467,7 @@ asset_block="""        GLES20.glActiveTexture(GLES20.GL_TEXTURE4);
         sharpZero1C.putShort((short)0).position(0);
         GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES30.GL_R16I,1,1,0,GLES30.GL_RED_INTEGER,GLES20.GL_SHORT,sharpZero1C);
         try(java.io.InputStream in=mView.getContext().getAssets().open(com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.ASSET)) {
-            int expected=com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.SELECTOR_COUNT
-                    *com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.ISO_COUNT
+            int expected=com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.ISO_COUNT
                     *com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.LUT_COUNT*2;
             byte[] data=new byte[expected]; int offset=0,n;
             while(offset<data.length&&(n=in.read(data,offset,data.length-offset))>0)offset+=n;
@@ -471,11 +494,11 @@ sharp_bind="""        int sharpSelector1C=com.particlesdevs.photoncamera.m9.rend
         boolean sharpReady1C=sharpSelector1C==0;
         if(sharpSelector1C>0 && monoSharpBank1C!=null) {
             if(sharpSelector1C!=monoSharpBoundSelector1C || sharpIsoSlot1C!=monoSharpBoundSlot1C) {
-                int rowBytes1C=com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.LUT_COUNT*2;
-                int rowIndex1C=sharpSelector1C*com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.ISO_COUNT+sharpIsoSlot1C;
-                int off1C=rowIndex1C*rowBytes1C;
+                byte[] modifiedRow1C=com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.modifiedRow(
+                        monoSharpBank1C,sharpSelector1C,sharpIsoSlot1C);
+                int rowBytes1C=modifiedRow1C.length;
                 ByteBuffer bytes1C=ByteBuffer.allocateDirect(rowBytes1C).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                bytes1C.put(monoSharpBank1C,off1C,rowBytes1C).position(0);
+                bytes1C.put(modifiedRow1C).position(0);
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE4); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,monoSharpTex1C);
                 GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES30.GL_R16I,
                         com.particlesdevs.photoncamera.m9.render.MonoSharpness1C.LUT_COUNT,1,0,
