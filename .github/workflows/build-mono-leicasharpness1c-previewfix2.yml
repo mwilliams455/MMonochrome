@@ -1,0 +1,413 @@
+name: Build MMonochrome LEICASHARPNESS1C PREVIEWFIX2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-leicasettings1c-sharpness-previewfix2]
+    paths:
+      - 'apk/mono1a/upstream1b/**'
+      - 'apk/mono1a/monosettings1a/**'
+      - 'apk/mono1a/monosettings1b/**'
+      - 'apk/mono1a/monoleicasettings1a/**'
+      - 'apk/mono1a/monoleicasettings1b/**'
+      - 'apk/mono1a/monoleicasettings1bfix1/**'
+      - 'apk/mono1a/monoleicasettings1bfix2/**'
+      - 'apk/mono1a/monoleicasettings1c/**'
+      - 'apk/mono1a/monoleicasettings1cpreviewfix1/**'
+      - 'apk/mono1a/monoleicasettings1cpreviewfix2/**'
+      - 'tools/generate_mm_sharpness5.py'
+      - '.github/workflows/build-mono-leicasharpness1c-previewfix2.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-leicasharpness1c-previewfix2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Checkout pinned Monochrom portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact validated MONOTAPMETER1B parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee LEICATONING1A_FIX2_SOURCE1D_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono1a-monotapmeter1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0; count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1; continue
+              i+=1; block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '): block.append(line[10:])
+                  elif not line.strip(): block.append('')
+                  else: raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-toning-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==4,count
+          print('MONOTAPMETER1B parent PASS')
+          PY
+
+      - name: Reconstruct published M9 modern source for pinned headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 m9upstream/patches/upstream2r_fix1/assemble.py "$GITHUB_WORKSPACE/m9modern"
+
+      - name: Checkout exact modern Photon base
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout --depth 1 --branch dev https://github.com/eszdman/PhotonCamera.git "$GITHUB_WORKSPACE/modern"
+          git -C "$GITHUB_WORKSPACE/modern" fetch --depth 1 origin 4ee108e169496f429c0afa0cc33e57bb6b2ec724
+          git -C "$GITHUB_WORKSPACE/modern" checkout --detach 4ee108e169496f429c0afa0cc33e57bb6b2ec724
+          test "$(git -C "$GITHUB_WORKSPACE/modern" rev-parse HEAD)" = "4ee108e169496f429c0afa0cc33e57bb6b2ec724"
+
+      - name: Restore exact September modern Monochrom merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u apk/mono1a/upstream1b/reconstruct.py             "$GITHUB_WORKSPACE/m9base/PhotonCamera"             "$GITHUB_WORKSPACE/modern"             "$GITHUB_WORKSPACE/m9modern" | tee LEICATONING1A_FIX2_SOURCE1D_RECONSTRUCT.txt
+
+      - name: Replay approved modern settings cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -u apk/mono1a/monosettings1a/apply.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_SETTINGS1A_APPLY.txt
+          python3 -u apk/mono1a/monosettings1a/test.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_SETTINGS1A_TEST.txt
+          python3 -u apk/mono1a/monosettings1b/apply.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_SETTINGS1B_APPLY.txt
+          python3 -u apk/mono1a/monosettings1b/test.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_SETTINGS1B_TEST.txt
+
+      - name: Replay validated Leica Contrast
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1a/*.py
+          python3 -u apk/mono1a/monoleicasettings1a/apply.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_CONTRAST_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1a/test.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_CONTRAST_TEST.txt
+
+      - name: Apply Leica Toning
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1b/*.py
+          python3 -u apk/mono1a/monoleicasettings1b/apply.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1b/test.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_TEST.txt
+
+      - name: Apply Toning capture FIX1
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1bfix1/*.py
+          python3 -u apk/mono1a/monoleicasettings1bfix1/apply.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_CAPTUREFIX_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1bfix1/test.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_CAPTUREFIX_TEST.txt
+
+      - name: Apply SOURCE1D primary Leica settings FIX2
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1bfix2/*.py
+          python3 -u apk/mono1a/monoleicasettings1bfix2/apply.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1bfix2/test.py "$ROOT" | tee LEICATONING1A_FIX2_SOURCE1D_TEST.txt
+
+      - name: Generate exact five-level Leica Sharpness tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          mkdir -p "$RUNNER_TEMP/mmsharp"
+          curl --fail --location --retry 4 --retry-all-errors             -o "$RUNNER_TEMP/mmsharp/m9.upd"             'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl --fail --location --retry 4 --retry-all-errors             -o "$RUNNER_TEMP/mmsharp/mm.upm"             'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo "c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  $RUNNER_TEMP/mmsharp/m9.upd" | sha256sum -c -
+          echo "53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  $RUNNER_TEMP/mmsharp/mm.upm" | sha256sum -c -
+          python3 tools/recover_leica_m9_mm_shared_key.py             "$RUNNER_TEMP/mmsharp/m9.upd" "$RUNNER_TEMP/mmsharp/mm.upm"             --mm-out "$RUNNER_TEMP/mmsharp/mm.dec"             --meta-out "$RUNNER_TEMP/mmsharp/recovery_meta.json"
+          python3 tools/generate_mm_sharpness5.py "$RUNNER_TEMP/mmsharp/mm.dec"             --cpp-out "$ROOT/app/src/main/cpp/mm_monochrom_sharpness5.inc"             --asset-out "$ROOT/app/src/main/assets/mono/mono_sharpness5.bin"             --java-out "$ROOT/app/src/main/java/com/particlesdevs/photoncamera/m9/render/MonoSharpness1C.java"             --report-out "$GITHUB_WORKSPACE/LEICASHARPNESS1C_TABLES.json"             | tee "$GITHUB_WORKSPACE/LEICASHARPNESS1C_TABLES.txt"
+          rm -f "$RUNNER_TEMP/mmsharp/m9.upd" "$RUNNER_TEMP/mmsharp/mm.upm" "$RUNNER_TEMP/mmsharp/mm.dec"
+          test ! -e "$RUNNER_TEMP/mmsharp/mm.dec"
+
+      - name: Apply Leica Sharpness
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1c/*.py tools/generate_mm_sharpness5.py
+          python3 -u apk/mono1a/monoleicasettings1c/apply.py "$ROOT" | tee LEICASHARPNESS1C_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1c/test.py "$ROOT" | tee LEICASHARPNESS1C_TEST.txt
+
+      - name: Restore working preview PREVIEWFIX1
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1cpreviewfix1/*.py
+          python3 -u apk/mono1a/monoleicasettings1cpreviewfix1/apply.py "$ROOT" | tee LEICASHARPNESS1C_PREVIEWFIX1_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1cpreviewfix1/test.py "$ROOT" | tee LEICASHARPNESS1C_PREVIEWFIX1_TEST.txt
+
+      - name: Restore missing preview probe helpers PREVIEWFIX2
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1cpreviewfix2/*.py
+          python3 -u apk/mono1a/monoleicasettings1cpreviewfix2/apply.py "$ROOT" | tee LEICASHARPNESS1C_PREVIEWFIX2_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1cpreviewfix2/test.py "$ROOT" | tee LEICASHARPNESS1C_PREVIEWFIX2_TEST.txt
+
+      - name: Set candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('modern/app/build.gradle')
+          s=p.read_text()
+          s,n=re.subn(r'versionCode\s+\d+', 'versionCode 26698', s, count=1); assert n==1,n
+          s,n=re.subn(r"versionName\s+'[^']+'", "versionName '0.10-monochrome-modernui1a-leicasharpness1c-previewfix2'", s, count=1); assert n==1,n
+          p.write_text(s)
+          PY
+
+      - name: Verify Leica Toning isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICATONING1A_FIX2_SOURCE1D_POLICY_PROOF.txt
+          from pathlib import Path
+          import hashlib,json
+          root=Path('modern')
+          frozen=json.loads(Path('apk/mono1a/upstream1b/frozen_monochrome.json').read_text())
+          allowed={
+            'app/src/main/cpp/m9color_jni.cpp',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9NativeColorCore.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/preview/MonoGpuPreview2A.java',
+          }
+          mismatches=[]
+          for rel,want in frozen.items():
+              got=hashlib.sha256((root/rel).read_bytes()).hexdigest()
+              if got!=want and rel not in allowed: mismatches.append((rel,got,want))
+          assert not mismatches,mismatches
+          contrast=json.loads((root/'LEICACONTRAST1A_ISOLATION.json').read_text())
+          tone=json.loads((root/'LEICATONING1A_ISOLATION.json').read_text())
+          fix1=json.loads((root/'LEICATONING1A_FIX1_ISOLATION.json').read_text())
+          fix2=json.loads((root/'LEICATONING1A_FIX2_SOURCE1D_ISOLATION.json').read_text())
+          assert contrast['jpegUsesSelectedCurve'] and contrast['previewUsesSelectedCurve']
+          assert tone['savedJpegToning'] and tone['livePreviewToning']
+          assert not tone['dngToning'] and tone['offBitExactGray']
+          assert tone['Cr']==[128,130,131,127,126,128,128]
+          assert tone['Cb']==[128,125,123,130,132,129,131]
+          assert fix1['previewInstallsVerifiedSharedBank']
+          assert fix1['stillAssetReopenNonfatal']
+          assert fix1['captureMustNotFailForMissingContrastBank']
+          assert fix2['portablePrimary']=='SOURCE1D_NATIVE_DNG_XYZ_Y'
+          assert fix2['source1dUsesSelectedContrast']
+          assert fix2['source1dUsesSelectedToning']
+          assert not fix2['linearDngToneChanged'] and not fix2['linearDngToningChanged']
+          print(json.dumps({
+            'revision':'LEICATONING1A_FIX2_SOURCE1D_POLICY',
+            'modernPhotonCommit':'4ee108e169496f429c0afa0cc33e57bb6b2ec724',
+            'contrastPreserved':True,
+            'toningStates':tone['stateLabels'],
+            'toningCr':tone['Cr'],
+            'toningCb':tone['Cb'],
+            'jpegAndPreviewOnly':True,
+            'dngExposureTapByteIdentical':True,
+            'genericPhotonColorControlsUsed':False,
+            'curveBankPostPackRequired':True
+          },indent=2))
+          PY
+
+      - name: Verify Leica Sharpness isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICASHARPNESS1C_POLICY_PROOF.txt
+          from pathlib import Path
+          import hashlib,json
+          root=Path('modern')
+          sharp=json.loads((root/'LEICASHARPNESS1C_ISOLATION.json').read_text())
+          previewfix=json.loads((root/'LEICASHARPNESS1C_PREVIEWFIX1_ISOLATION.json').read_text())
+          previewfix2=json.loads((root/'LEICASHARPNESS1C_PREVIEWFIX2_ISOLATION.json').read_text())
+          assert sharp['revision']=='LEICASHARPNESS1C'
+          assert sharp['menu']==['Off','Low','Standard','Medium high','High']
+          assert sharp['menuEnum']==[0,1,2,3,4]
+          assert sharp['default']==2
+          assert sharp['isoDomain']=='physical_Camera2_SENSOR_SENSITIVITY'
+          assert sharp['source1dPrimaryUsesSharpness']
+          assert sharp['sharpnessBeforeContrast'] and sharp['sharpnessBeforeToning']
+          assert sharp['previewUsesSameSelectorIsoCodeAndModifiedLut']
+          assert previewfix['savedJpegSharpnessPreserved']
+          assert previewfix['previewSharpnessTemporarilyDisabled']
+          assert previewfix['previewContrastPreserved'] and previewfix['previewToningPreserved']
+          assert previewfix2['fragmentShaderCompileContractRestored']
+          assert previewfix2['savedJpegSharpnessPreserved']
+          assert previewfix2['previewContrastPreserved'] and previewfix2['previewToningPreserved']
+          assert not sharp['linearDngSharpnessChanged']
+          assert not sharp['exposureChanged'] and not sharp['tapMeterChanged']
+          assert sharp['sourceBankSha256']=='282a6e7eb0603203d5ddb36f32862e0340a9cc2d24c35b4c0af2b1bd79c06d10'
+          tables=json.loads(Path('LEICASHARPNESS1C_TABLES.json').read_text())
+          asset=root/'app/src/main/assets/mono/mono_sharpness5.bin'
+          assert asset.is_file() and asset.stat().st_size==16*2050*2
+          assert hashlib.sha256(asset.read_bytes()).hexdigest()==tables['assetSha256']==sharp['generatedAssetSha256']
+          print(json.dumps({
+            'revision':'LEICASHARPNESS1C_POLICY',
+            'menu':sharp['menu'],
+            'default':'Standard',
+            'physicalIsoDomain':True,
+            'sourceBankSha256':sharp['sourceBankSha256'],
+            'assetSha256':sharp['generatedAssetSha256'],
+            'source1dPrimary':True,
+            'sharpnessBeforeContrastAndToning':True,
+            'dngExposureTapByteIdentical':True,
+            'previewSharpnessTemporarilyDisabled':True,
+            'previewRestoredToContrastToning':True,
+            'previewPixelParityClaim':False
+          },indent=2))
+          PY
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Run modern Monochrom regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest             --tests '*ZoomControllerTest'             --tests '*MonoUpstream1A*'             --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICATONING1A_FIX2_SOURCE1D_GRADLE_TESTS.log"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICATONING1A_FIX2_SOURCE1D_GRADLE.log"
+
+      - name: Package firmware-free post-pack base APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICASHARPNESS1C_PREVIEWFIX2_BASE_APK_PROOF.txt
+          from pathlib import Path
+          import hashlib,shutil,zipfile,json
+          root=Path('modern')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'))
+          assert len(apks)==1,apks
+          out=Path('MMonochrome_LEICASHARPNESS1C_PREVIEWFIX2_POSTPACK_BASE.apk')
+          shutil.copyfile(apks[0],out)
+          with zipfile.ZipFile(out) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              assert b'MonoContrastCurves1A' in dex
+              assert b'MonoToning1A' in dex
+              assert b'MonoSharpness1C' in dex
+              assert b'Medium high' in dex
+              assert b'installVerifiedBank' in dex
+              assert b'loadCurveOrNull' in dex
+              assert b'selected_portable_active_sensor_DNG_XYZ_Y_with_Leica_JPEG_sharpness_contrast_toning_DNG_and_exposure_unchanged' in dex
+              assert b'firmware_normalISO_sRGB_curve0' in dex
+              assert b'Selenium Strong' in dex
+              names=set(z.namelist())
+              assert 'assets/mono/mono_contrast_curves.bin' not in names
+              assert 'assets/mono/mono_sharpness5.bin' in names
+              sharp=z.read('assets/mono/mono_sharpness5.bin')
+              assert len(sharp)==16*2050*2
+              assert hashlib.sha256(sharp).hexdigest()==json.loads(Path('LEICASHARPNESS1C_TABLES.json').read_text())['assetSha256']
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('LEICASHARPNESS1C_PREVIEWFIX2_BASE_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          Path('LEICASHARPNESS1C_PREVIEWFIX2_POSTPACK_REQUIRED.txt').write_text(
+              'Inject assets/mono/mono_contrast_curves.bin (10240 bytes, SHA-256 ac010ac0a107fb4b98ed817f24b4b9ab2d739fcfd70571b4f7d8375335e293c6), zipalign, then sign with the existing PhotonCamera key.\n')
+          print('PASS firmware-free base',out.name,digest,out.stat().st_size)
+          PY
+          mkdir -p postpack-tools/lib
+          cp "$ANDROID_HOME/build-tools/35.0.0/apksigner" postpack-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" postpack-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" postpack-tools/lib/
+          chmod +x postpack-tools/apksigner postpack-tools/zipalign
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICATONING1A_FIX2_SOURCE1D-EVIDENCE
+          path: |
+            LEICATONING1A_FIX2_SOURCE1D_*.log
+            LEICATONING1A_FIX2_SOURCE1D_*.txt
+            LEICATONING1A_FIX2_SOURCE1D_*.json
+            LEICASHARPNESS1C_*.txt
+            LEICASHARPNESS1C_PREVIEWFIX1_*.txt
+            LEICASHARPNESS1C_PREVIEWFIX2_*.txt
+            LEICASHARPNESS1C_*.json
+            LEICASHARPNESS1C_PREVIEWFIX1_*.json
+            LEICASHARPNESS1C_PREVIEWFIX2_*.json
+          if-no-files-found: warn
+
+      - name: Upload post-pack base and signing tools
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICASHARPNESS1C-PREVIEWFIX2-POSTPACK-BASE
+          path: |
+            MMonochrome_LEICASHARPNESS1C_PREVIEWFIX2_POSTPACK_BASE.apk
+            LEICASHARPNESS1C_PREVIEWFIX2_BASE_APK_SHA256.txt
+            LEICASHARPNESS1C_PREVIEWFIX2_BASE_APK_PROOF.txt
+            LEICATONING1A_FIX2_SOURCE1D_POLICY_PROOF.txt
+            LEICASHARPNESS1C_POLICY_PROOF.txt
+            LEICASHARPNESS1C_PREVIEWFIX2_POSTPACK_REQUIRED.txt
+            postpack-tools/
+          if-no-files-found: error
