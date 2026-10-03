@@ -181,12 +181,16 @@ jobs:
               if got!=want and rel not in allowed: mismatches.append((rel,got,want))
           assert not mismatches,mismatches
           contrast=json.loads((root/'LEICACONTRAST1A_ISOLATION.json').read_text())
-          tone=json.loads((root/'LEICATONING1A_FIX1_ISOLATION.json').read_text())
+          tone=json.loads((root/'LEICATONING1A_ISOLATION.json').read_text())
+          fix=json.loads((root/'LEICATONING1A_FIX1_ISOLATION.json').read_text())
           assert contrast['jpegUsesSelectedCurve'] and contrast['previewUsesSelectedCurve']
           assert tone['savedJpegToning'] and tone['livePreviewToning']
           assert not tone['dngToning'] and tone['offBitExactGray']
           assert tone['Cr']==[128,130,131,127,126,128,128]
           assert tone['Cb']==[128,125,123,130,132,129,131]
+          assert fix['previewInstallsVerifiedSharedBank']
+          assert fix['stillAssetReopenNonfatal']
+          assert fix['captureMustNotFailForMissingContrastBank']
           print(json.dumps({
             'revision':'LEICATONING1A_FIX1_POLICY',
             'modernPhotonCommit':'4ee108e169496f429c0afa0cc33e57bb6b2ec724',
