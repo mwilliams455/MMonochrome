@@ -1,0 +1,245 @@
+name: Build MMonochrome LEICAEV1A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-leicasettings1g-ev1a]
+    paths:
+      - 'apk/mono1a/upstream1b/**'
+      - 'apk/mono1a/monosettings1a/**'
+      - 'apk/mono1a/monosettings1b/**'
+      - 'apk/mono1a/monoleicasettings1a/**'
+      - 'apk/mono1a/monoleicasettings1b/**'
+      - 'apk/mono1a/monoleicasettings1bfix1/**'
+      - 'apk/mono1a/monoleicasettings1bfix2/**'
+      - 'apk/mono1a/monoleicasettings1c/**'
+      - 'apk/mono1a/monoleicasettings1cpreviewfix1/**'
+      - 'apk/mono1a/monoleicasettings1cpreviewfix2/**'
+      - 'apk/mono1a/monoleicasettings1d/**'
+      - 'apk/mono1a/monoleicasettings1e/**'
+      - 'apk/mono1a/monoleicasettings1f/**'
+      - 'apk/mono1a/monoleicasettings1g/**'
+      - 'tools/**'
+      - '.github/workflows/build-mono-leicaautoiso1a.yml'
+      - '.github/workflows/build-mono-leicaslowest1a.yml'
+      - '.github/workflows/build-mono-leicaaelock1a.yml'
+      - '.github/workflows/build-mono-leicaev1a.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-leicaev1a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Checkout pinned Monochrom portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact phone-validated LEICAAELOCK1A parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee LEICAEV1A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono-leicaaelock1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1;continue
+              i+=1;block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-ev-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==4,count
+          print('LEICAAELOCK1A parent reconstruction/host policy PASS')
+          PY
+
+      - name: Apply Leica Exposure Compensation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1g/*.py
+          python3 -u apk/mono1a/monoleicasettings1g/apply.py "$ROOT" | tee LEICAEV1A_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1g/test.py "$ROOT" | tee LEICAEV1A_TEST.txt
+
+      - name: Set candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('modern/app/build.gradle')
+          s=p.read_text()
+          s,n=re.subn(r'versionCode\s+\d+', 'versionCode 26702', s, count=1);assert n==1,n
+          s,n=re.subn(r"versionName\s+'[^']+'","versionName '0.14-monochrome-modernui1a-leicaev1a'",s,count=1);assert n==1,n
+          p.write_text(s)
+          PY
+
+      - name: Verify EV isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICAEV1A_POLICY_PROOF.txt
+          from pathlib import Path
+          import hashlib,json
+          root=Path('modern')
+          proof=json.loads((root/'LEICAEV1A_ISOLATION.json').read_text())
+          test=json.loads((root/'LEICAEV1A_TEST_REPORT.json').read_text())
+          assert proof['rangeEv']==[-3.0,3.0]
+          assert abs(proof['stepEv']-1.0/3.0)<1e-12
+          assert proof['userEvAppliedExactlyOnce']
+          assert proof['automaticPlacementRemainsActiveWithUserEv']
+          assert proof['previewUsesSamePhysicalPlan'] and proof['captureUsesSamePhysicalPlan']
+          assert proof['dngExposureChangesByPhysicalCaptureNotPostRender']
+          assert proof['aeLockClearsWhenUserEvChanges']
+          assert proof['autoIsoMaximumPreserved'] and proof['slowestSpeedPreserved']
+          assert proof['hiddenPhotonExposureCompensationForcedNeutral']
+          assert not proof['HDR']
+          assert test['status']=='PASS'
+          for rel,want in proof['frozenImageOutputHashes'].items():
+              assert hashlib.sha256((root/rel).read_bytes()).hexdigest()==want,rel
+          contrast=root/'app/src/main/assets/mono/mono_contrast_curves.bin'
+          sharp=root/'app/src/main/assets/mono/mono_sharpness5.bin'
+          assert contrast.is_file() and hashlib.sha256(contrast.read_bytes()).hexdigest()=='ac010ac0a107fb4b98ed817f24b4b9ab2d739fcfd70571b4f7d8375335e293c6'
+          assert sharp.is_file()
+          print(json.dumps({
+            'revision':'LEICAEV1A_POLICY',
+            'rangeEv':proof['rangeEv'],
+            'stepEv':proof['stepEv'],
+            'singleUserControl':True,
+            'automaticPlacementPlusUserEv':'add_once_in_physical_allocator',
+            'vendorAeCompensationNeutral':True,
+            'previewCaptureSharedPlan':True,
+            'physicalDngExposureIntent':True,
+            'autoIsoSlowestAeLockPreserved':True,
+            'renderLinearDngContrastToningSharpnessFrozen':True,
+          },indent=2))
+          PY
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Run modern Monochrom regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest             --tests '*ZoomControllerTest'             --tests '*MonoUpstream1A*'             --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICAEV1A_GRADLE_TESTS.log"
+
+      - name: Build directly installable APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICAEV1A_GRADLE.log"
+
+      - name: Package and verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICAEV1A_APK_PROOF.txt
+          from pathlib import Path
+          import hashlib,shutil,zipfile
+          root=Path('modern')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'));assert len(apks)==1,apks
+          out=Path('MMonochrome_LEICAEV1A.apk')
+          shutil.copyfile(apks[0],out)
+          with zipfile.ZipFile(out) as z:
+              names=set(z.namelist())
+              assert 'assets/mono/mono_contrast_curves.bin' in names
+              assert 'assets/mono/mono_sharpness5.bin' in names
+              assert hashlib.sha256(z.read('assets/mono/mono_contrast_curves.bin')).hexdigest()=='ac010ac0a107fb4b98ed817f24b4b9ab2d739fcfd70571b4f7d8375335e293c6'
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [
+                  b'LEICAEV1A',
+                  b'clampLeicaUserEv',
+                  b'exposureCompensationAppliedInPhysicalPlanOnce',
+                  b'LEICAAELOCK1A',
+                  b'LEICASLOWEST1A',
+                  b'LEICAAUTOISO1A',
+                  b'MonoSharpness1C',
+                  b'MonoToning1A',
+              ]:assert marker in dex,marker
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('LEICAEV1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS directly installable Leica EV APK',out.name,digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICAEV1A-EVIDENCE
+          path: |
+            LEICAEV1A_*.log
+            LEICAEV1A_*.txt
+            LEICAEV1A_*.json
+          if-no-files-found: warn
+
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICAEV1A
+          path: |
+            MMonochrome_LEICAEV1A.apk
+            LEICAEV1A_APK_SHA256.txt
+            LEICAEV1A_APK_PROOF.txt
+            LEICAEV1A_POLICY_PROOF.txt
+          if-no-files-found: error
