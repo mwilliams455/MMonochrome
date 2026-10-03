@@ -189,6 +189,22 @@ def main():
     if sha(mm)!=MM_DEC_SHA: raise SystemExit('MM decrypted SHA mismatch')
     bf=component(mm)
     if sha(bf)!=BF547_SHA: raise SystemExit('BF547 SHA mismatch')
+    process_luts=pwad.get_lump(mm,["LUTS","PROCESS","LUTS"]).data
+    if sha(process_luts)!="dea370ecbf043da03a4af8a7d126d930caf8364f2c806e96a15b2dcb78fcab96":
+        raise SystemExit('PROCESS/LUTS SHA mismatch')
+    toning_off=0x7f148
+    toning_count=struct.unpack_from('<I',process_luts,toning_off)[0]
+    if toning_count!=7: raise SystemExit('Toning table count mismatch')
+    tone_a=list(struct.unpack_from('<7I',process_luts,toning_off+4))
+    tone_gap=list(struct.unpack_from('<3I',process_luts,toning_off+0x20))
+    tone_b=list(struct.unpack_from('<7I',process_luts,toning_off+0x2c))
+    if tone_gap != [0,0,0]: raise SystemExit('Toning table separator mismatch')
+    expected_a=[128,130,131,127,126,128,128]
+    expected_b=[128,125,123,130,132,129,131]
+    if tone_a!=expected_a or tone_b!=expected_b:
+        raise SystemExit(f'Toning table mismatch A={tone_a} B={tone_b}')
+    hdr=list(struct.unpack_from('<18I',process_luts,4))
+    if toning_off not in hdr: raise SystemExit('PROCESS/LUTS header does not reference Toning table')
     a.outdir.mkdir(parents=True,exist_ok=True);work=a.outdir/'_work';work.mkdir(exist_ok=True)
     lines=disasm(a.objdump,bf,work)
     for p in work.iterdir():p.unlink()
@@ -245,6 +261,17 @@ def main():
         'ConvertYCrCb':string_refs(lines,bf,0xCE378),
         'YCrCb':string_refs(lines,bf,0xCFCD8),
       },
+      'firmware_toning_table':{
+        'process_luts_sha256':sha(process_luts),
+        'header_reference_index':hdr.index(toning_off),
+        'offset':hex(toning_off),
+        'count':toning_count,
+        'pairA':tone_a,
+        'separator':tone_gap,
+        'pairB':tone_b,
+        'states':['Off','Sepia Weak','Sepia Strong','Cool Weak','Cool Strong','Selenium Weak','Selenium Strong'],
+        'pairs':[list(x) for x in zip(tone_a,tone_b)],
+      },
       'job_toning_field_accesses':offset_accesses(lines,[0x450,0x454,0x458,0x45c]),
       'job_builder_window':address_window(lines,0x37600,0x37a80),
       'job_builder_function':{
@@ -253,6 +280,16 @@ def main():
         'direct_callers':direct_xrefs(lines,0x376c4),
         'literal_hits':literal_hits(bf,0x376c4),
         'split_refs':split_refs(lines,0x376c4),
+      },
+      'post_builder_consumer_370ec':{
+        'address':'0x370ec',
+        'body':address_window(lines,0x370ec,0x37118),
+        'direct_callers':direct_xrefs(lines,0x370ec),
+      },
+      'job_init_37118':{
+        'address':'0x37118',
+        'body':address_window(lines,0x37118,0x37220),
+        'direct_callers':direct_xrefs(lines,0x37118),
       },
       'job_builder_call_targets':call_targets_in_range(lines,0x37600,0x37a80),
       'strength_resolver':{
@@ -296,6 +333,9 @@ def main():
             f.write(f'\n===== {name.upper()} SETTER =====\n'+'\n'.join(body)+'\n')
         for name,body in report['getters'].items():
             f.write(f'\n===== {name.upper()} GETTER =====\n'+'\n'.join(body)+'\n')
+        f.write('\n===== FIRMWARE TONING TABLE =====\n'+json.dumps(report['firmware_toning_table'],indent=2)+'\n')
+        f.write('\n===== POST BUILDER CONSUMER 0x370EC =====\n'+'\n'.join(report['post_builder_consumer_370ec']['body'])+'\n')
+        f.write('\n===== JOB INIT 0x37118 =====\n'+'\n'.join(report['job_init_37118']['body'])+'\n')
         f.write('\n===== JOB BUILDER 0x376C4 =====\n'+'\n'.join(report['job_builder_function']['body'])+'\n')
         f.write('\n===== JOB BUILDER CALLERS =====\n'+json.dumps(report['job_builder_function']['direct_callers'],indent=2)+'\n')
         f.write('\n===== JOB BUILDER BROAD WINDOW =====\n'+'\n'.join(report['job_builder_window'])+'\n')
