@@ -149,6 +149,46 @@ public final class MonoSharpness1C {{
         int s=clampSelector(selector), slot=nearestIsoSlot(Math.max(1,iso));
         return CODES[s][slot];
     }}
+
+    private static int scaleSample(short x,int code) {{
+        if(code<=0) return 0;
+        int mul=0,shift=0;
+        switch(code) {{
+            case 1: mul=1; shift=2; break;
+            case 2: mul=1; shift=1; break;
+            case 3: mul=3; shift=2; break;
+            case 4: mul=1; shift=0; break;
+            case 5: mul=5; shift=2; break;
+            case 6: mul=3; shift=1; break;
+            case 7: mul=7; shift=2; break;
+            case 8: mul=2; shift=0; break;
+            case 9: mul=5; shift=1; break;
+            case 10: mul=3; shift=0; break;
+            case 11: mul=13; shift=2; break;
+            case 12: mul=5; shift=0; break;
+            default: return 0;
+        }}
+        int y=(x*mul)>>shift;
+        if(y<-2048) y=-2048; else if(y>2048) y=2048;
+        return y;
+    }}
+
+    /** Exact firmware integer scaling of one canonical ISO row for preview upload. */
+    public static byte[] modifiedRow(byte[] bank,int selector,int isoSlot) {{
+        if(bank==null || bank.length!=ISO_COUNT*LUT_COUNT*2) throw new IllegalArgumentException("sharpness bank length");
+        int s=clampSelector(selector), slot=Math.max(0,Math.min(ISO_COUNT-1,isoSlot));
+        int code=CODES[s][slot];
+        byte[] out=new byte[LUT_COUNT*2];
+        int base=slot*LUT_COUNT*2;
+        for(int i=0;i<LUT_COUNT;i++) {{
+            int lo=bank[base+2*i]&255, hi=bank[base+2*i+1];
+            short x=(short)(lo|(hi<<8));
+            int y=scaleSample(x,code);
+            out[2*i]=(byte)(y&255);
+            out[2*i+1]=(byte)((y>>8)&255);
+        }}
+        return out;
+    }}
 }}
 ''')
 
