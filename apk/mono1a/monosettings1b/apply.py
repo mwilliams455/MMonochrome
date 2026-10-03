@@ -20,6 +20,8 @@ frozen = [
     J / "m9/exposure/MonoPlacementAssist1D.java",
     J / "m9/preview/MonoTapMeter1A.java",
     J / "processing/parameters/IsoExpoSelector.java",
+    J / "ui/camera/CameraFragment.java",
+    J / "ui/camera/CameraUIController.java",
     root / "app/src/main/cpp/m9color_jni.cpp",
     root / "app/src/main/assets/mono/mono_curve02_gl2a.bin",
 ]
