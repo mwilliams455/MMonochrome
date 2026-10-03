@@ -228,10 +228,8 @@ for i in range(cb,len(s)):
             ce=i+1;break
 if ce is None:raise SystemExit("LEICABRACKET1A plan constructor end missing")
 ctor=s[cs:ce]
-assign='''        this.postRawBoost=postRawBoost; this.autoEv=autoEv; this.autoReason=autoReason; this.flags=flags;'''
-if ctor.count(assign)!=1:raise SystemExit("LEICABRACKET1A constructor assignment anchor mismatch")
-ctor=ctor.replace(assign,assign+'''
-        this.bracketEv=0.0;this.bracketIndex=-1;this.bracketCount=0;''',1)
+# Ordinary plans keep Java's zero defaults for bracket metadata; the bracket flag is
+# authoritative, so these fields are only interpreted on an explicit bracket frame.
 overload='''
 
     public MonoExposurePlan1A(long id, long epoch, long createdNs, long sensorTimestampNs,
