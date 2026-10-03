@@ -239,10 +239,17 @@ def main():
       },
       'job_toning_field_accesses':offset_accesses(lines,[0x450,0x454,0x458,0x45c]),
       'job_builder_window':address_window(lines,0x37600,0x37a80),
+      'job_builder_function':{
+        'address':'0x376c4',
+        'body':address_window(lines,0x376c4,0x379a4),
+        'direct_callers':direct_xrefs(lines,0x376c4),
+        'literal_hits':literal_hits(bf,0x376c4),
+        'split_refs':split_refs(lines,0x376c4),
+      },
       'job_builder_call_targets':call_targets_in_range(lines,0x37600,0x37a80),
       'strength_resolver':{
         'address':'0xaba8c',
-        'body':function_window(lines,0xaba8c,800),
+        'body':address_window(lines,0xaba8c,0xabb80),
         'direct_xrefs':direct_xrefs(lines,0xaba8c),
         'table_root_runtime':'0xdb7ac',
         'table_u32_window':u32_window(bf,0xdb7ac,48,8),
@@ -269,6 +276,8 @@ def main():
             f.write(f'\n===== {name.upper()} SETTER =====\n'+'\n'.join(body)+'\n')
         for name,body in report['getters'].items():
             f.write(f'\n===== {name.upper()} GETTER =====\n'+'\n'.join(body)+'\n')
+        f.write('\n===== JOB BUILDER 0x376C4 =====\n'+'\n'.join(report['job_builder_function']['body'])+'\n')
+        f.write('\n===== JOB BUILDER CALLERS =====\n'+json.dumps(report['job_builder_function']['direct_callers'],indent=2)+'\n')
         f.write('\n===== JOB BUILDER BROAD WINDOW =====\n'+'\n'.join(report['job_builder_window'])+'\n')
         f.write('\n===== JOB BUILDER CALL TARGETS =====\n'+json.dumps(report['job_builder_call_targets'],indent=2)+'\n')
         f.write('\n===== STRENGTH RESOLVER 0xABA8C =====\n'+'\n'.join(report['strength_resolver']['body'])+'\n')
