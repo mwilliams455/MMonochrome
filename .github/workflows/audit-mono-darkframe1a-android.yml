@@ -1,0 +1,171 @@
+name: Audit MMonochrome DARKFRAME1A Android RAW path
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-darkframe1a]
+    paths:
+      - '.github/workflows/audit-mono-darkframe1a-android.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Checkout pinned Monochrom portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact LEICADIAGNOSTICS1A parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee DARKFRAME1A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono-leicadiagnostics1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1;continue
+              i+=1;block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-dark-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          print('pre-SDK shell blocks',count)
+          assert (Path('modern')/'LEICADIAGNOSTICS1A_ISOLATION.json').is_file()
+          print('LEICADIAGNOSTICS1A parent reconstruction PASS')
+          PY
+
+      - name: Audit black-level and hot-pixel handling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee DARKFRAME1A_ANDROID_AUDIT.txt
+          from pathlib import Path
+          import re,json
+          root=Path('modern')
+          src=root/'app/src/main/java'
+          cpp=root/'app/src/main/cpp'
+          terms=[
+            'SENSOR_DYNAMIC_BLACK_LEVEL','SENSOR_BLACK_LEVEL_PATTERN',
+            'SENSOR_OPTICAL_BLACK_REGIONS','HOT_PIXEL_MODE',
+            'STATISTICS_HOT_PIXEL_MAP_MODE','STATISTICS_HOT_PIXEL_MAP',
+            'HotPixel','hot pixel','hotPixel','blackLevel','black level',
+            'blackLevelPattern','BlackLevelPattern','dynamicBlack',
+            'opticalBlack','optical black','SENSOR_SENSITIVITY',
+            'SENSOR_EXPOSURE_TIME'
+          ]
+          hits=[]
+          files=list(src.rglob('*.java'))+list(cpp.rglob('*.[ch]pp'))+list(cpp.rglob('*.c'))+list(cpp.rglob('*.h'))
+          for p in sorted(set(files)):
+              try:s=p.read_text(errors='replace')
+              except:continue
+              rows=[]
+              lines=s.splitlines()
+              for i,l in enumerate(lines):
+                  ms=[t for t in terms if t.lower() in l.lower()]
+                  if ms:
+                      a=max(0,i-5);b=min(len(lines),i+8)
+                      rows.append({'line':i+1,'terms':ms,'context':'\n'.join(f'{j+1}: {lines[j]}' for j in range(a,b))})
+              if rows:hits.append({'path':str(p.relative_to(root)),'hits':rows})
+          print(json.dumps(hits,indent=2))
+          print('\n===== KEY FILE DUMPS =====')
+          candidates=[
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9R35Renderer.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/render/M9PrimaryRenderQueue.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoLinearPlane1A.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/m9/export/MonoDngWriter1A.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/Parameters.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/processing/parameters/IsoExpoSelector.java',
+            'app/src/main/java/com/particlesdevs/photoncamera/capture/CaptureController.java',
+          ]
+          for rel in candidates:
+              p=root/rel
+              if p.is_file():
+                  print('\n===== '+rel+' =====')
+                  s=p.read_text(errors='replace').splitlines()
+                  for i,l in enumerate(s):
+                      if re.search(r'black|hot.?pixel|raw|rowStride|pixelStride|Image\.Plane|SENSOR_',l,re.I):
+                          a=max(0,i-4);b=min(len(s),i+7)
+                          print('\n'.join(f'{j+1}: {s[j]}' for j in range(a,b)))
+          PY
+
+      - name: Audit Camera2 capability plumbing and capture request ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee DARKFRAME1A_CAMERA2_AUDIT.txt
+          from pathlib import Path
+          import re,json
+          root=Path('modern');src=root/'app/src/main/java'
+          rows=[]
+          for p in src.rglob('*.java'):
+              s=p.read_text(errors='replace')
+              if 'CaptureRequest.Builder' not in s and '.set(CaptureRequest.' not in s and 'CameraCharacteristics.' not in s:
+                  continue
+              contexts=[]
+              lines=s.splitlines()
+              for i,l in enumerate(lines):
+                  if any(x in l for x in [
+                      'HOT_PIXEL','BLACK_LEVEL','SENSOR_EXPOSURE_TIME','SENSOR_SENSITIVITY',
+                      'STATISTICS_HOT_PIXEL','CaptureRequest.Builder','createCaptureRequest'
+                  ]):
+                      a=max(0,i-6);b=min(len(lines),i+10)
+                      contexts.append({'line':i+1,'text':'\n'.join(f'{j+1}: {lines[j]}' for j in range(a,b))})
+              if contexts:rows.append({'path':str(p.relative_to(root)),'contexts':contexts})
+          print(json.dumps(rows,indent=2))
+          PY
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DARKFRAME1A-ANDROID-AUDIT
+          path: |
+            DARKFRAME1A_PARENT.log
+            DARKFRAME1A_ANDROID_AUDIT.txt
+            DARKFRAME1A_CAMERA2_AUDIT.txt
+          if-no-files-found: error
