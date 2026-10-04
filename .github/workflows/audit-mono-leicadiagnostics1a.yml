@@ -1,0 +1,141 @@
+name: Audit MMonochrome LEICADIAGNOSTICS1A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-leicasettings1m-diagnostics1a]
+    paths:
+      - '.github/workflows/audit-mono-leicadiagnostics1a.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Checkout pinned Monochrom portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact phone-validated LEICAOUTPUTMODE1A parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee LEICADIAGNOSTICS1A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono-leicaoutputmode1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1;continue
+              i+=1;block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-diag-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==5,count
+          print('LEICAOUTPUTMODE1A parent reconstruction PASS')
+          PY
+
+      - name: Audit public diagnostic and private recovery writers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICADIAGNOSTICS1A_AUDIT.txt
+          from pathlib import Path
+          import json,re
+          root=Path('modern')
+          src=root/'app/src/main/java'
+          suffixes=[
+              '_M9.json','_M9_PRIMARY.json','_MONO_LIVEPAIR.json',
+              '_M9_SOURCECAL1A.json','_M9_RAWSHADING1A.json',
+              '_MONO_LINEAR1A_EXPORT.json'
+          ]
+          rows=[]
+          for p in sorted(src.rglob('*.java')):
+              s=p.read_text(errors='replace')
+              matched=[x for x in suffixes if x in s]
+              plumbing=any(x in s for x in [
+                  'M9DiagnosticBurstSpool.stage','M9DiagnosticSidecarIO.persist',
+                  'Files.write','Files.writeString','Files.newOutputStream'
+              ])
+              if not matched and not plumbing:
+                  continue
+              lines=s.splitlines()
+              contexts=[]
+              for i,line in enumerate(lines):
+                  if any(x in line for x in suffixes) or 'M9DiagnosticBurstSpool.stage' in line or 'M9DiagnosticSidecarIO.persist' in line:
+                      a=max(0,i-5);b=min(len(lines),i+7)
+                      contexts.append({'line':i+1,'text':'\n'.join(f'{j+1}: {lines[j]}' for j in range(a,b))})
+              if matched or contexts:
+                  rows.append({
+                      'path':str(p.relative_to(root)),
+                      'suffixes':matched,
+                      'contexts':contexts[:20]
+                  })
+          for name in [
+              'M9DiagnosticBurstSpool.java','M9DiagnosticSidecarIO.java',
+              'MonoDngSpool1B.java','M9JpegFinalizeQueue.java','MonoDngExport1A.java'
+          ]:
+              found=list(src.rglob(name))
+              for p in found:
+                  print('\n===== '+str(p.relative_to(root))+' =====')
+                  lines=p.read_text(errors='replace').splitlines()
+                  for i,line in enumerate(lines):
+                      if re.search(r'\b(stage|persist|recover|manifest|spool|submit|write|export)\b',line,re.I):
+                          a=max(0,i-3);b=min(len(lines),i+6)
+                          print('\n'.join(f'{j+1}: {lines[j]}' for j in range(a,b)))
+          print('\n===== SIDECAR MARKER SUMMARY =====')
+          print(json.dumps(rows,indent=2))
+          PY
+
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICADIAGNOSTICS1A-AUDIT
+          path: |
+            LEICADIAGNOSTICS1A_PARENT.log
+            LEICADIAGNOSTICS1A_AUDIT.txt
+          if-no-files-found: error
