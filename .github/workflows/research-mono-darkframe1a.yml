@@ -1,0 +1,219 @@
+name: Research M Monochrom DARKFRAME1A firmware selector
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-darkframe1a]
+    paths:
+      - '.github/workflows/research-mono-darkframe1a.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Blackfin disassembler
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-multiarch curl xz-utils build-essential
+          OBJDUMP="$(command -v objdump)"
+          if ! "$OBJDUMP" -i 2>/dev/null | grep -Eiq 'bfin|blackfin'; then
+            cd "$RUNNER_TEMP"
+            curl --fail --location --retry 4 --retry-all-errors -o binutils-2.44.tar.xz https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz
+            tar -xf binutils-2.44.tar.xz
+            mkdir -p binutils-build && cd binutils-build
+            ../binutils-2.44/configure --target=bfin-elf --disable-nls --disable-werror --disable-gdb --disable-gas --disable-ld --disable-sim
+            make -j2 all-binutils
+            OBJDUMP="$PWD/binutils/objdump"
+          fi
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
+
+      - name: Download and decrypt canonical M9 + M Monochrom firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/darkframe1a"; mkdir -p "$ROOT"
+          curl -sS --fail --location --retry 4 --retry-all-errors -o "$ROOT/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl -sS --fail --location --retry 4 --retry-all-errors -o "$ROOT/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$ROOT/m9.upd" | sha256sum -c --strict
+          echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$ROOT/mm.upm" | sha256sum -c --strict
+          python3 tools/recover_leica_m9_mm_shared_key.py "$ROOT/m9.upd" "$ROOT/mm.upm" \
+            --m9-out "$ROOT/m9.dec" --mm-out "$ROOT/mm.dec" --meta-out "$ROOT/recovery.json"
+          rm -f "$ROOT/m9.upd" "$ROOT/mm.upm"
+
+      - name: Extract firmware components and map textual evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/darkframe1a"
+          python3 - <<'PY' | tee "$ROOT/structure.txt"
+          from pathlib import Path
+          import json,hashlib,struct,re,sys
+          sys.path.insert(0,'tools')
+          from pwad import walk_pwad,get_lump
+          root=Path(__import__('os').environ['RUNNER_TEMP'])/'darkframe1a'
+          report={}
+          for label in ('m9','mm'):
+              data=(root/f'{label}.dec').read_bytes()
+              rows=[]
+              for path,l in walk_pwad(data):
+                  rows.append({'path':path,'offset':l.offset,'size':l.size,'sha256':l.sha256,'pwad':l.is_pwad})
+                  if path in ('BF547','BODY','GUI','RULES'):
+                      safe=path.replace('/','_')
+                      (root/f'{label}_{safe}.bin').write_bytes(l.data)
+              report[label]=rows
+          (root/'structure.json').write_text(json.dumps(report,indent=2)+'\n')
+          for label,rows in report.items():
+              print('\n###',label)
+              for r in rows: print(r['path'],r['size'],r['sha256'])
+          # Explicit BF547 comparison.
+          m9=(root/'m9_BF547.bin').read_bytes(); mm=(root/'mm_BF547.bin').read_bytes()
+          print('\nBF547 sizes',len(m9),len(mm),'same=',m9==mm)
+          print('m9 bf547',hashlib.sha256(m9).hexdigest())
+          print('mm bf547',hashlib.sha256(mm).hexdigest())
+          PY
+          for L in m9 mm; do
+            strings -a -t x -n 4 "$ROOT/${L}_BF547.bin" > "$ROOT/${L}_BF547.strings.txt"
+            strings -a -t x -n 4 "$ROOT/${L}_BODY.bin" > "$ROOT/${L}_BODY.strings.txt"
+            strings -a -t x -n 4 "$ROOT/${L}_GUI.bin" > "$ROOT/${L}_GUI.strings.txt"
+          done
+          {
+            echo '### M MONOCHROM BF547 keyword strings'
+            grep -Ein 'noise|dark|black|shutter|exposure|long|subtract|correction|pixel|blr|iso|temperature|ccd' "$ROOT/mm_BF547.strings.txt" || true
+            echo '### M9 BF547 keyword strings'
+            grep -Ein 'noise|dark|black|shutter|exposure|long|subtract|correction|pixel|blr|iso|temperature|ccd' "$ROOT/m9_BF547.strings.txt" || true
+            echo '### BODY keyword strings'
+            grep -Ein 'noise|dark|black|shutter|exposure|long|subtract|correction|pixel|blr|iso|temperature|ccd' "$ROOT/mm_BODY.strings.txt" || true
+            echo '### GUI keyword strings'
+            grep -Ein 'noise|dark|black|shutter|exposure|long|subtract|correction|pixel|blr|iso|temperature|ccd' "$ROOT/mm_GUI.strings.txt" || true
+          } | tee "$ROOT/keywords.txt"
+
+      - name: Map BF547 string pointers and likely dark-frame constants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/darkframe1a"
+          python3 - <<'PY' | tee "$ROOT/pointer_map.txt"
+          from pathlib import Path
+          import os,re,struct,json,hashlib
+          root=Path(os.environ['RUNNER_TEMP'])/'darkframe1a'
+          RAM=0x20000
+          keywords=re.compile(r'noise|dark|black|shutter|exposure|long|subtract|correction|blr|iso|temperature|ccd',re.I)
+          def cstrings(b,minlen=4):
+              out=[]; start=None
+              for i,x in enumerate(b+b'\0'):
+                  if 32<=x<127:
+                      if start is None:start=i
+                  else:
+                      if start is not None and i-start>=minlen:
+                          out.append((start,b[start:i].decode('ascii','replace')))
+                      start=None
+              return out
+          def allhits(b,p):
+              out=[];i=0
+              while 1:
+                  i=b.find(p,i)
+                  if i<0:return out
+                  out.append(i);i+=1
+          for label in ('mm','m9'):
+              b=(root/f'{label}_BF547.bin').read_bytes()
+              print('\n###',label,'BF547 strings + pointer refs')
+              for off,s in cstrings(b):
+                  if not keywords.search(s):continue
+                  ptr=off+RAM
+                  refs=allhits(b,struct.pack('<I',ptr))
+                  print(json.dumps({'string_off':hex(off),'runtime':hex(ptr),'text':s,
+                                    'ref_count':len(refs),'refs':[hex(x+RAM) for x in refs[:50]]}))
+                  for r in refs[:8]:
+                      lo=max(0,r-48);hi=min(len(b),r+80)
+                      print(' REF',hex(r+RAM),b[lo:hi].hex(' '))
+          # Search common exposure-time integer representations. This is evidence only;
+          # hits are not assigned semantics until linked to a control/code path.
+          candidates={
+             '1_15_us':66667,'1_20_us':50000,'1_24_us':41667,'1_25_us':40000,
+             '1_30_us':33333,'1_32_us':31250,'1_45_us':22222,'1_60_us':16667,
+             '1_30_ns':33333333,'2s_us':2000000,'2s_ms':2000,'2s_ns':2000000000,
+             '30_den':30,'60_den':60,'15_den':15,'8_den':8,'4_den':4,'2_den':2
+          }
+          b=(root/'mm_BF547.bin').read_bytes()
+          print('\n### MM raw constant hits')
+          for name,v in candidates.items():
+              hits=allhits(b,struct.pack('<I',v))
+              if hits:print(name,v,len(hits),[hex(x+RAM) for x in hits[:80]])
+          PY
+
+      - name: Disassemble BF547 and collect dark-frame neighborhoods
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/darkframe1a"
+          "$OBJDUMP" -D -b binary -m bfin --adjust-vma=0x20000 "$ROOT/mm_BF547.bin" > "$ROOT/mm_BF547.dis.txt"
+          "$OBJDUMP" -D -b binary -m bfin --adjust-vma=0x20000 "$ROOT/m9_BF547.bin" > "$ROOT/m9_BF547.dis.txt"
+          python3 - <<'PY' | tee "$ROOT/disasm_refs.txt"
+          from pathlib import Path
+          import os,re,struct
+          root=Path(os.environ['RUNNER_TEMP'])/'darkframe1a';RAM=0x20000
+          b=(root/'mm_BF547.bin').read_bytes()
+          dis=(root/'mm_BF547.dis.txt').read_text(errors='replace').splitlines()
+          addr_line={}
+          for i,l in enumerate(dis):
+              m=re.match(r'\s*([0-9a-fA-F]+):',l)
+              if m:addr_line[int(m.group(1),16)]=i
+          def allhits(p):
+              out=[];i=0
+              while 1:
+                  i=b.find(p,i)
+                  if i<0:return out
+                  out.append(i);i+=1
+          # Find keyword c-strings, then pointer-table references and print nearby disassembly
+          starts=[];cur=None
+          for i,x in enumerate(b+b'\0'):
+              if 32<=x<127:
+                  if cur is None:cur=i
+              else:
+                  if cur is not None and i-cur>=4:
+                      s=b[cur:i].decode('ascii','replace')
+                      if re.search(r'noise|dark|black|shutter|exposure|long|subtract|correction|blr|iso|temperature|ccd',s,re.I):
+                          starts.append((cur,s))
+                  cur=None
+          for off,s in starts:
+              ptr=off+RAM
+              refs=allhits(struct.pack('<I',ptr))
+              if not refs:continue
+              print('\nSTRING',hex(ptr),repr(s),'refs',','.join(hex(r+RAM) for r in refs))
+              for r in refs:
+                  ra=r+RAM
+                  # closest preceding decoded address
+                  keys=[a for a in addr_line if a<=ra]
+                  if not keys:continue
+                  a=max(keys);i=addr_line[a]
+                  print('--- REF',hex(ra),'nearest disasm',hex(a))
+                  print('\n'.join(dis[max(0,i-18):min(len(dis),i+28)]))
+          PY
+          xz -T0 -9 "$ROOT/mm_BF547.dis.txt"
+          xz -T0 -9 "$ROOT/m9_BF547.dis.txt"
+
+      - name: Upload research evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DARKFRAME1A-FIRMWARE-EVIDENCE
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/darkframe1a/recovery.json
+            ${{ runner.temp }}/darkframe1a/structure.json
+            ${{ runner.temp }}/darkframe1a/structure.txt
+            ${{ runner.temp }}/darkframe1a/keywords.txt
+            ${{ runner.temp }}/darkframe1a/pointer_map.txt
+            ${{ runner.temp }}/darkframe1a/disasm_refs.txt
+            ${{ runner.temp }}/darkframe1a/mm_BF547.strings.txt
+            ${{ runner.temp }}/darkframe1a/m9_BF547.strings.txt
+            ${{ runner.temp }}/darkframe1a/mm_BF547.dis.txt.xz
+            ${{ runner.temp }}/darkframe1a/m9_BF547.dis.txt.xz
+          if-no-files-found: error
