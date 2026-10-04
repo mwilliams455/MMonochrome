@@ -1,0 +1,216 @@
+name: Build MMonochrome LEICAOUTPUTMODE1A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-leicasettings1l-outputmode1a]
+    paths:
+      - 'apk/mono1a/**'
+      - '.github/workflows/build-mono-leicauicleanup1a.yml'
+      - '.github/workflows/build-mono-leicaoutputmode1a.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-leicaoutputmode1a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Checkout pinned Monochrom portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact phone-validated LEICAUICLEANUP1A parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee LEICAOUTPUTMODE1A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono-leicauicleanup1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1;continue
+              i+=1;block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-output-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert count==4,count
+          print('LEICAUICLEANUP1A parent reconstruction PASS')
+          PY
+
+      - name: Apply Monochrom output-mode split
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monoleicasettings1l/*.py
+          python3 -u apk/mono1a/monoleicasettings1l/apply.py "$ROOT" | tee LEICAOUTPUTMODE1A_APPLY.txt
+          python3 -u apk/mono1a/monoleicasettings1l/test.py "$ROOT" | tee LEICAOUTPUTMODE1A_TEST.txt
+
+      - name: Set candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('modern/app/build.gradle')
+          s=p.read_text()
+          s,n=re.subn(r'versionCode\s+\d+','versionCode 26708',s,count=1);assert n==1,n
+          s,n=re.subn(r"versionName\s+'[^']+'","versionName '0.20-monochrome-modernui1a-leicaoutputmode1a'",s,count=1);assert n==1,n
+          p.write_text(s)
+          PY
+
+      - name: Verify output-mode isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICAOUTPUTMODE1A_POLICY_PROOF.txt
+          from pathlib import Path
+          import hashlib,json
+          root=Path('modern')
+          p=json.loads((root/'LEICAOUTPUTMODE1A_ISOLATION.json').read_text())
+          t=json.loads((root/'LEICAOUTPUTMODE1A_TEST_REPORT.json').read_text())
+          assert p['saveModes']['0_JPEG']=={'jpeg':True,'monochromDng':False}
+          assert p['saveModes']['1_DNG_JPEG']=={'jpeg':True,'monochromDng':True}
+          assert p['saveModes']['2_DNG']=={'jpeg':False,'monochromDng':True}
+          assert p['originalSensorRaw']=='independent_toggle_default_off'
+          assert p['originalSensorRawCanAccompanyAnySaveMode']
+          assert p['derivedDngAllocationSkippedInJpegOnly']
+          assert p['derivedDngAdmissionSkippedInJpegOnly']
+          assert p['genericPhotonRawSaverDisabled']
+          assert not p['nativeRenderMathChanged']
+          assert not p['jpegEncodingMathChanged']
+          assert not p['dngPixelMathChanged']
+          assert not p['exposurePlanChanged']
+          assert t['status']=='PASS'
+          for rel,want in p['frozenPhotographicHashes'].items():
+              assert hashlib.sha256((root/rel).read_bytes()).hexdigest()==want,rel
+          print(json.dumps({
+            'revision':'LEICAOUTPUTMODE1A_POLICY',
+            'JPEG':'JPEG only when sensor RAW toggle is Off',
+            'DNG+JPEG':'derived Monochrom DNG + JPEG',
+            'DNG':'derived Monochrom DNG only',
+            'originalSensorRAW':'independent additive toggle',
+            'pixelExposureMathFrozen':True
+          },indent=2))
+          PY
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Run modern Monochrom regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest             --tests '*ZoomControllerTest'             --tests '*MonoUpstream1A*'             --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICAOUTPUTMODE1A_GRADLE_TESTS.log"
+
+      - name: Build directly installable APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/LEICAOUTPUTMODE1A_GRADLE.log"
+
+      - name: Package and verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee LEICAOUTPUTMODE1A_APK_PROOF.txt
+          from pathlib import Path
+          import hashlib,shutil,zipfile
+          root=Path('modern')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'));assert len(apks)==1,apks
+          out=Path('MMonochrome_LEICAOUTPUTMODE1A.apk')
+          shutil.copyfile(apks[0],out)
+          with zipfile.ZipFile(out) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [
+                  b'isMonoLinearDngRequested',
+                  b'isMonoJpegRequested',
+                  b'isMonoOriginalSensorRawEnabled',
+                  b'Original Sensor RAW=Off',
+                  b'LEICADISPLAYAIDS1A'
+              ]: assert marker in dex,marker
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('LEICAOUTPUTMODE1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS',out.name,digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICAOUTPUTMODE1A-EVIDENCE
+          path: |
+            LEICAOUTPUTMODE1A_*.log
+            LEICAOUTPUTMODE1A_*.txt
+            LEICAOUTPUTMODE1A_*.json
+          if-no-files-found: warn
+
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-LEICAOUTPUTMODE1A
+          path: |
+            MMonochrome_LEICAOUTPUTMODE1A.apk
+            LEICAOUTPUTMODE1A_APK_SHA256.txt
+            LEICAOUTPUTMODE1A_APK_PROOF.txt
+            LEICAOUTPUTMODE1A_POLICY_PROOF.txt
+          if-no-files-found: error
