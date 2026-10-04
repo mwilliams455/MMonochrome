@@ -1,0 +1,223 @@
+name: Build MMonochrome MONODARKFRAME1A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-darkframe1a]
+    paths:
+      - 'apk/mono1a/monodarkframe1a/**'
+      - '.github/workflows/build-mono-darkframe1a.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mono-darkframe1a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Monochrom overlays
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout legacy validated scaffold
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: fb1db92ef78df70442b9fee879795e584f2170cf
+          path: m9base
+          fetch-depth: 1
+
+      - name: Checkout published M9 modern reconstruction
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: research/m9-upstream2r-fix1
+          path: m9upstream
+          fetch-depth: 1
+
+      - name: Checkout pinned Monochrom portability tools
+        uses: actions/checkout@v4
+        with:
+          repository: mwilliams455/M9Camera_refresh
+          ref: 57476072a146d53da11235667f9681e64427c9cf
+          path: m9port
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rebuild exact phone-validated LEICADIAGNOSTICS1A parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - <<'PY' 2>&1 | tee MONODARKFRAME1A_PARENT.log
+          from pathlib import Path
+          import subprocess
+          lines=Path('.github/workflows/build-mono-leicadiagnostics1a.yml').read_text().splitlines()
+          stop=lines.index('      - name: Set up Android SDK')
+          i=0;count=0
+          while i<stop:
+              if lines[i].strip()!='run: |':
+                  i+=1;continue
+              i+=1;block=[]
+              while i<stop and not lines[i].startswith('      - name: '):
+                  line=lines[i]
+                  if line.startswith('          '):block.append(line[10:])
+                  elif not line.strip():block.append('')
+                  else:raise SystemExit('Unexpected parent boundary '+line)
+                  i+=1
+              count+=1
+              p=Path('/tmp/mono-darkframe-parent-%d.sh'%count)
+              p.write_text('\n'.join(block)+'\n')
+              subprocess.run(['bash',str(p)],check=True)
+          assert (Path('modern')/'LEICADIAGNOSTICS1A_ISOLATION.json').is_file()
+          print('LEICADIAGNOSTICS1A parent reconstruction PASS; shell blocks',count)
+          PY
+
+      - name: Apply MONODARKFRAME1A
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/modern"
+          python3 -m py_compile apk/mono1a/monodarkframe1a/*.py
+          python3 -u apk/mono1a/monodarkframe1a/apply.py "$ROOT" | tee MONODARKFRAME1A_APPLY.txt
+          python3 -u apk/mono1a/monodarkframe1a/test.py "$ROOT" | tee MONODARKFRAME1A_TEST.txt
+
+      - name: Set candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('modern/app/build.gradle')
+          s=p.read_text()
+          s,n=re.subn(r'versionCode\s+\d+','versionCode 26710',s,count=1);assert n==1,n
+          s,n=re.subn(r"versionName\s+'[^']+'","versionName '0.20-monochrome-modernui1a-monodarkframe1a'",s,count=1);assert n==1,n
+          p.write_text(s)
+          PY
+
+      - name: Verify dark-frame isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MONODARKFRAME1A_POLICY_PROOF.txt
+          from pathlib import Path
+          import hashlib,json
+          root=Path('modern')
+          p=json.loads((root/'MONODARKFRAME1A_ISOLATION.json').read_text())
+          t=json.loads((root/'MONODARKFRAME1A_TEST_REPORT.json').read_text())
+          assert p['leicaDecisionRecovered']
+          assert p['nominalThresholdsNs']=={
+              'ISO_320_1000':250000000,
+              'ISO_1250_4000':125000000,
+              'ISO_5000_10000':66000000,
+          }
+          assert p['strictGreaterThan']
+          assert not p['hotPixelModeForced']
+          assert not p['originalRawBufferMutated']
+          assert not p['secondExposure'] and not p['artificialDelay'] and not p['hdrOrStacking']
+          assert not p['originalSensorRawPathChanged']
+          assert p['derivedMonoDngAndJpegShareCorrectedSource']
+          assert not p['deviceVendorPolicy']
+          assert t['status']=='PASS'
+          for rel,want in p['frozenHashes'].items():
+              assert hashlib.sha256((root/rel).read_bytes()).hexdigest()==want,rel
+          print(json.dumps({
+              'revision':'MONODARKFRAME1A_POLICY',
+              'firmwarePolicy':'recovered Leica 1.022 BlackRef decision',
+              'androidTemperature':'nominal 20-39C Leica group',
+              'request':'hot-pixel map metadata only',
+              'dynamicBlack':'eligible derived path',
+              'appHotPixelRepair':'only if HAL explicitly says HOT_PIXEL_MODE_OFF',
+              'originalSensorRAW':'untouched',
+              'secondExposure':False,
+              'artificialDelay':False,
+              'HDR':False
+          },indent=2))
+          PY
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android build components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Run modern Monochrom regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest \
+            --tests '*ZoomControllerTest' \
+            --tests '*MonoUpstream1A*' \
+            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONODARKFRAME1A_GRADLE_TESTS.log"
+
+      - name: Build directly installable APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd modern
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/MONODARKFRAME1A_GRADLE.log"
+
+      - name: Package and verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee MONODARKFRAME1A_APK_PROOF.txt
+          from pathlib import Path
+          import hashlib,shutil,zipfile
+          root=Path('modern')
+          apks=list((root/'app/build/outputs/apk/debug').glob('*.apk'));assert len(apks)==1,apks
+          out=Path('MMonochrome_MONODARKFRAME1A.apk')
+          shutil.copyfile(apks[0],out)
+          with zipfile.ZipFile(out) as z:
+              dex=b''.join(z.read(n) for n in z.namelist() if n.startswith('classes') and n.endswith('.dex'))
+              for marker in [
+                  b'MONODARKFRAME1A',
+                  b'STATISTICS_HOT_PIXEL_MAP_MODE',
+                  b'isMonoOriginalSensorRawEnabled',
+                  b'isMonoDiagnosticsEnabled',
+                  b'isMonoLinearDngRequested'
+              ]: assert marker in dex,marker
+          digest=hashlib.sha256(out.read_bytes()).hexdigest()
+          Path('MONODARKFRAME1A_APK_SHA256.txt').write_text(digest+'  '+out.name+'\n')
+          print('PASS',out.name,digest,out.stat().st_size)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONODARKFRAME1A-EVIDENCE
+          path: |
+            MONODARKFRAME1A_*.log
+            MONODARKFRAME1A_*.txt
+            MONODARKFRAME1A_*.json
+          if-no-files-found: warn
+
+      - name: Upload validation APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-MONODARKFRAME1A
+          path: |
+            MMonochrome_MONODARKFRAME1A.apk
+            MONODARKFRAME1A_APK_SHA256.txt
+            MONODARKFRAME1A_APK_PROOF.txt
+            MONODARKFRAME1A_POLICY_PROOF.txt
+          if-no-files-found: error
