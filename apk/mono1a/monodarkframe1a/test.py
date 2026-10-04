@@ -40,7 +40,9 @@ for marker in [
 # a result read/comparison, never CaptureRequest.Builder.set(HOT_PIXEL_MODE...).
 assert '.set(CaptureRequest.HOT_PIXEL_MODE' not in h
 assert 'builder.set(CaptureRequest.STATISTICS_HOT_PIXEL_MAP_MODE' in h
-assert 'ByteBuffer' not in h and '.put(' in h  # JSONObject only; no camera RAW buffer ownership
+assert 'import java.nio.ByteBuffer' not in h
+assert 'correctNormalizedHotPixels(short[] norm16' in h
+assert 'norm16[index]=(short)replacement;' in h
 
 c=(J/"capture/CaptureController.java").read_text()
 assert c.count("MonoDarkFrame1A.configureCaptureRequest(")==2
