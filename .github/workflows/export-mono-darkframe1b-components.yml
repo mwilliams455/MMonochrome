@@ -1,0 +1,65 @@
+name: Export M Monochrom DARKFRAME1B raw firmware components
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-darkframe1a]
+    paths:
+      - '.github/workflows/export-mono-darkframe1b-components.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download/decrypt canonical firmware and extract raw components
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/darkframe1b"; mkdir -p "$ROOT"
+          curl -sS --fail --location --retry 4 --retry-all-errors -o "$ROOT/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl -sS --fail --location --retry 4 --retry-all-errors -o "$ROOT/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          echo 'c3d30d7124abe6a3674cf2095719c178454b8773b1454cb70cf54ae468024da4  '"$ROOT/m9.upd" | sha256sum -c --strict
+          echo '53330385edfbfb9beeffa06645bffa2789e27dda614869107698919464f80ad8  '"$ROOT/mm.upm" | sha256sum -c --strict
+          python3 tools/recover_leica_m9_mm_shared_key.py "$ROOT/m9.upd" "$ROOT/mm.upm" --mm-out "$ROOT/mm.dec" >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,sys,hashlib,json
+          sys.path.insert(0,'tools')
+          from pwad import get_lump
+          root=Path(os.environ['RUNNER_TEMP'])/'darkframe1b'
+          fw=(root/'mm.dec').read_bytes()
+          components={
+            'BF547.bin':['BF547'],
+            'BF561_bf0.bin':['BF561','bf0'],
+            'BF561_bf1.bin':['BF561','bf1'],
+            'BF561_bf0.map':['BF561','bf0.map'],
+            'BF561_bf1.map':['BF561','bf1.map'],
+            'RULES.bin':['RULES'],
+          }
+          report={}
+          for name,path in components.items():
+              b=get_lump(fw,path).data
+              (root/name).write_bytes(b)
+              report[name]={'size':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+          (root/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+          rm -f "$ROOT/m9.upd" "$ROOT/mm.upm" "$ROOT/mm.dec"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DARKFRAME1B-RAW-COMPONENTS
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/darkframe1b/BF547.bin
+            ${{ runner.temp }}/darkframe1b/BF561_bf0.bin
+            ${{ runner.temp }}/darkframe1b/BF561_bf1.bin
+            ${{ runner.temp }}/darkframe1b/BF561_bf0.map
+            ${{ runner.temp }}/darkframe1b/BF561_bf1.map
+            ${{ runner.temp }}/darkframe1b/RULES.bin
+            ${{ runner.temp }}/darkframe1b/manifest.json
+          if-no-files-found: error
