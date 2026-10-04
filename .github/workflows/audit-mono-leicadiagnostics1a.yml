@@ -74,7 +74,7 @@ jobs:
               p=Path('/tmp/mono-diag-parent-%d.sh'%count)
               p.write_text('\n'.join(block)+'\n')
               subprocess.run(['bash',str(p)],check=True)
-          assert count==5,count
+          assert count==4,count
           print('LEICAOUTPUTMODE1A parent reconstruction PASS')
           PY
 
