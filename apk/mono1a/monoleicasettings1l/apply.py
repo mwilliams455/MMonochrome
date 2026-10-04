@@ -173,11 +173,12 @@ settingsbar.write_text(s)
 # ----- Derived Monochrom DNG exporter: no allocation/admission in JPEG mode ----
 s=export.read_text()
 # Capture defensive gate.
-capture_sig='''    public static Pending capture(Mat cameraRgb,int width,int height,int rotation,
-            float[] weights,double representationScale) throws Exception {
-'''
-s=one(s,capture_sig,capture_sig+'''        if(!com.particlesdevs.photoncamera.settings.PreferenceKeys.isMonoLinearDngRequested())return null;
-''',"derived DNG capture gate")
+capture_marker="public static Pending capture("
+ci=s.find(capture_marker)
+if ci<0:raise SystemExit("LEICAOUTPUTMODE1A derived DNG capture method missing")
+cb=s.find("{",ci)
+if cb<0:raise SystemExit("LEICAOUTPUTMODE1A derived DNG capture brace missing")
+s=s[:cb+1]+"\n        if(!com.particlesdevs.photoncamera.settings.PreferenceKeys.isMonoLinearDngRequested())return null;"+s[cb+1:]
 # Bracketing's non-notifying admission probe and ordinary shutter admission both bypass
 # the durable DNG queue when Save=JPEG.
 s=one(s,
