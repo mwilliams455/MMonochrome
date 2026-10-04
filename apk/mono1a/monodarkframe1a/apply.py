@@ -22,6 +22,14 @@ def one(s,a,b,label):
     if n!=1: raise SystemExit(f"MONODARKFRAME1A {label} anchor count={n}")
     return s.replace(a,b,1)
 
+def one_after(s,marker,a,b,label):
+    start=s.find(marker)
+    if start<0: raise SystemExit(f"MONODARKFRAME1A {label} scope marker missing")
+    tail=s[start:]
+    n=tail.count(a)
+    if n!=1: raise SystemExit(f"MONODARKFRAME1A {label} scoped anchor count={n}")
+    return s[:start]+tail.replace(a,b,1)
+
 # Freeze storage/output ownership and every existing Leica look/exposure component.
 # Only still-request metadata and the private derived render copy may change.
 frozen=[
@@ -107,7 +115,7 @@ s=one(s,
             out.diagnostics.put("monoDevicePortRevision", "MONO_DEVICEPORT2A_CFA_ORIGIN");
 ''',"dynamic black diagnostics")
 
-s=one(s,
+s=one_after(s,"    private static RenderCore renderNativeProspectiveCore(",
 '''        nativeNormalizeWorkersUsed = normalizeStats[2];
 
         long[][] rawCounts = new long[4][wl];
@@ -122,7 +130,7 @@ s=one(s,
         long[][] rawCounts = new long[4][wl];
 ''',"private normalized hot-pixel correction")
 
-s=one(s,
+s=one_after(s,"    private static RenderCore renderNativeProspectiveCore(",
 '''            d.put("blackLevelB", black != null && black.length >= 4 ? black[3] : 64.0);
             d.put("neutralR", neutralF[0]);
 ''',
