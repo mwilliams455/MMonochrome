@@ -1,0 +1,92 @@
+name: Fast M Monochrom DARKFRAME1A firmware scan
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/mono-darkframe1a]
+    paths:
+      - '.github/workflows/research-mono-darkframe1a-fast.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download, decrypt, and scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/darkfast"; mkdir -p "$ROOT"
+          curl -sS --fail --location --retry 4 --retry-all-errors -o "$ROOT/m9.upd" 'https://reddotforum.com/Firmware_files/M9%2C%20M9-P%2C%20M-E/m9-1_216.upd'
+          curl -sS --fail --location --retry 4 --retry-all-errors -o "$ROOT/mm.upm" 'https://reddotforum.com/Firmware_files/M%20Monochrom/Mm-1_022.upm'
+          python3 tools/recover_leica_m9_mm_shared_key.py "$ROOT/m9.upd" "$ROOT/mm.upm" --m9-out "$ROOT/m9.dec" --mm-out "$ROOT/mm.dec" >/dev/null
+          python3 - <<'PY' | tee "$ROOT/report.txt"
+          from pathlib import Path
+          import os,sys,struct,re,json,hashlib
+          sys.path.insert(0,'tools')
+          from pwad import walk_pwad
+          root=Path(os.environ['RUNNER_TEMP'])/'darkfast'; RAM=0x20000
+          def find_lump(data,name):
+              h=[l.data for p,l in walk_pwad(data) if p==name or p.endswith('/'+name)]
+              if len(h)!=1: raise RuntimeError((name,len(h)))
+              return h[0]
+          def cstrings(b,minlen=4):
+              out=[];st=None
+              for i,x in enumerate(b+b'\0'):
+                  if 32<=x<127:
+                      if st is None:st=i
+                  else:
+                      if st is not None and i-st>=minlen:out.append((st,b[st:i].decode('ascii','replace')))
+                      st=None
+              return out
+          def hits(b,p):
+              out=[];i=0
+              while True:
+                  i=b.find(p,i)
+                  if i<0:return out
+                  out.append(i);i+=1
+          key=re.compile(r'noise|dark|black|shutter|exposure|long|subtract|correction|blr|iso|temp|ccd|pixel|frame',re.I)
+          for label in ('mm','m9'):
+              fw=(root/f'{label}.dec').read_bytes(); bf=find_lump(fw,'BF547')
+              print('\n###',label,'BF547',len(bf),hashlib.sha256(bf).hexdigest())
+              ss=[(o,s) for o,s in cstrings(bf) if key.search(s)]
+              for o,s in ss:
+                  ptr=o+RAM; rr=hits(bf,struct.pack('<I',ptr))
+                  print(json.dumps({'off':hex(o),'ptr':hex(ptr),'s':s,'refs':[hex(x+RAM) for x in rr[:40]]}))
+              # dump words around every keyword pointer reference
+              for o,s in ss:
+                  ptr=o+RAM
+                  for r in hits(bf,struct.pack('<I',ptr))[:20]:
+                      lo=max(0,r-64); hi=min(len(bf),r+128)
+                      words=[]
+                      for woff in range(lo-(lo%4),hi-3,4):
+                          words.append([hex(woff+RAM),hex(struct.unpack_from('<I',bf,woff)[0])])
+                      print('CTX',json.dumps({'string':s,'ref':hex(r+RAM),'words':words}))
+              # Numeric constants in several plausible units.
+              vals=[
+                30,15,8,4,2,1,2000,4000,8000,15000,30000,33333,33334,31250,
+                66667,125000,250000,500000,1000000,2000000,
+                33333333,66666667,125000000,250000000,500000000,1000000000,2000000000
+              ]
+              print('CONSTANTS')
+              for v in vals:
+                  rr=hits(bf,struct.pack('<I',v))
+                  if rr: print(v,len(rr),[hex(x+RAM) for x in rr[:80]])
+          # Look at all ASCII text in common BODY/GUI (byte-identical M9/MM) too.
+          fw=(root/'mm.dec').read_bytes()
+          for name in ('BODY','GUI'):
+              blob=find_lump(fw,name)
+              print('\n###',name,'keyword strings')
+              for o,s in cstrings(blob):
+                  if key.search(s): print(hex(o),repr(s))
+          PY
+          rm -f "$ROOT/m9.upd" "$ROOT/mm.upm" "$ROOT/m9.dec" "$ROOT/mm.dec"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MMonochrome-DARKFRAME1A-FASTSCAN
+          path: ${{ runner.temp }}/darkfast/report.txt
+          if-no-files-found: error
